@@ -137,3 +137,9 @@ ast_index_file.py
 
 
 untrackfiles
+
+
+# 大文件
+chatgml.jsonl
+giikin_this_task_data-v1
+
