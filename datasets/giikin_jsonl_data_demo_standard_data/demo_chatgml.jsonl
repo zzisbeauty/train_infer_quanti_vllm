@@ -2,3 +2,14 @@
 {"messages": [{"role": "user", "content": "aaaaa"}, {"role": "assistant", "content": "bbbbb"}, {"role": "user", "content": "ccccc"}, {"role": "assistant", "content": "ddddd"}]}
 {"messages": [{"role": "user", "content": "AAAAA"}, {"role": "assistant", "content": "BBBBB"}, {"role": "user", "content": "CCCCC"}, {"role": "assistant", "content": "DDDDD"}]}
 {"messages": [{"role": "user", "content": "你是一位。。。。"}]}
+
+{"messages": [
+    {
+        "role": "user", 
+        "content": f"你是一位高效的用户意图分析专家 下一条信息：[好的，帮您查询]。结合上文，可知#客服#在明确用户的下单电话后，将帮助用户查询物流状态。\n"
+                   f"至此，已经完全分析了整段对话中的信息... 接下来，请你按照与上述示例相同的分析步骤，分析如下 ... 任务。如果你正确地完成了工作，我会为你提供$100的小费。\n"},
+    {
+        "role": "assistant", 
+        "content": "基于上述已知规则与信息... 至此，已经完全分析了整段对话中的信息，明确了每一句用户的信息所咨询的商品所处的购物阶段以及用户表达的意图。"
+    }
+]}

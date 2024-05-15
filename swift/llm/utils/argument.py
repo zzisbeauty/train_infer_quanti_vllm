@@ -394,10 +394,18 @@ class ArgumentsBase:
 
 @dataclass
 class SftArguments(ArgumentsBase):
+
+    proPath = os.getcwd()
+    a = 1
+
     # You can specify the model by either using the model_type or model_id_or_path.
     model_type: Optional[str] = field(
         default=None, metadata={'help': f'model_type choices: {list(MODEL_MAPPING.keys())}'})
+
+    # model_id_or_path: Optional[str] = None
     model_id_or_path: Optional[str] = None
+
+
     model_revision: Optional[str] = None
     model_layer_cls_name: Optional[str] = field(
         default=None,

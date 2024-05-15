@@ -1,5 +1,9 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
-import os
+import os,sys
+
+proPath = os.getcwd()
+sys.path.append(proPath)
+
 from functools import partial
 from typing import Any, Dict, Union
 
