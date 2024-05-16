@@ -323,7 +323,6 @@ def get_dataset_from_repo(dataset_id: str,
                           preprocess_func: PreprocessFunc,
                           split: List[str],
                           dataset_sample: int = -1,
-                          val_sample: int = -1,
                           *,
                           random_state: Optional[RandomState] = None,
                           dataset_test_ratio: float = 0.,
@@ -460,7 +459,6 @@ register_dataset(
     get_dataset_from_repo,
     split=['validation', 'test'],
     tags=['chat', 'multi-modal', 'audio', '🔥'],
-    val_sample=200,  # default val sample
     is_main=False)
 
 
@@ -504,10 +502,11 @@ def long_alpaca_preprocessor(dataset: HfDataset):
         response = row['response']
         if response and response.startswith('Answer:'):
             response = response[len('Answer:') + 1:].strip()
-        return {'query': row['query'], 'response': response}
+            row['response'] = response
+        return response
 
-    return dataset.rename_columns({'instruction': 'query', 'output': 'response'}) \
-        .remove_columns(['input', 'file']).map(map_row).filter(lambda row: row['response'] is not None)
+    dataset = AlpacaPreprocessor()(dataset)
+    return dataset.map(map_row)
 
 
 register_dataset(
@@ -987,20 +986,27 @@ def _preprocess_msagent_multirole_dataset(dataset: HfDataset) -> HfDataset:
     只根据对话历史进行回复\n3. 长话短说，不要说太多话，不要超过50字 """
     history_prompt = '\n\n【chat history】'
     conv_prompt = '\n {name}:{content}'
-    query = []
-    response = []
+    system, query, response = [], [], []
+
+    def process_conversation(conv):
+        query, response = '', conv[-1]['value']
+        system = conv[0]['value'] if conv[0]['from'] != 'user' else ''
+        if conv[0]['from'] == 'user':
+            query = conv[0]['value']
+        elif 'next_speakers:' not in system:
+            if '【注意事项】' not in system and system:
+                system += res_prompt
+            system += history_prompt
+            system += ''.join([conv_prompt.format(name=c['from'], content=c['value']) for c in conv[1:-1]])
+
+        return system, query, response
 
     for d in dataset:
-        conv = d['conversations']
-        system = conv[0]['value']
-        if '【注意事项】' not in system:
-            system += res_prompt
-        system += history_prompt
-        response.append(conv[-1]['value'])
-        for i in range(1, len(conv) - 1):
-            system += conv_prompt.format(name=conv[i]['from'], content=conv[i]['value'])
-        query.append(system)
-    return HfDataset.from_dict({'query': query, 'response': response})
+        sys, qry, resp = process_conversation(d['conversations'])
+        system.append(sys)
+        query.append(qry)
+        response.append(resp)
+    return HfDataset.from_dict({'system': system, 'query': query, 'response': response})
 
 
 register_dataset(

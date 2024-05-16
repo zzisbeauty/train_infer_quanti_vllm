@@ -136,7 +136,9 @@ def prepare_model_template(args: InferArguments,
     model_kwargs['device_map'] = device_map
 
     # Loading Model and Tokenizer
-    if args.load_in_8bit or args.load_in_4bit:
+    if hasattr(args, 'quant_config'):
+        model_kwargs['quantization_config'] = args.quant_config
+    elif args.load_in_8bit or args.load_in_4bit:
         quantization_config = BitsAndBytesConfig(
             args.load_in_8bit,
             args.load_in_4bit,
@@ -157,7 +159,8 @@ def prepare_model_template(args: InferArguments,
         model_id_or_path = args.model_id_or_path
     if automodel_class is not None:
         kwargs['automodel_class'] = automodel_class
-
+    if args.local_repo_path:
+        kwargs['local_repo_path'] = args.local_repo_path
     model, tokenizer = get_model_tokenizer(
         args.model_type,
         args.torch_dtype,
@@ -241,6 +244,22 @@ def llm_infer(args: InferArguments) -> None:
                 cwd, args.device_map_config_path)
             with open(config_path, 'r') as json_file:
                 device_map = json.load(json_file)
+        if args.quant_method == 'hqq':
+            from transformers import HqqConfig
+            if args.hqq_dynamic_config_path is not None:
+                cwd = os.getcwd()
+                config_path = args.hqq_dynamic_config_path if os.path.isabs(
+                    args.hqq_dynamic_config_path) else os.path.join(cwd, args.hqq_dynamic_config_path)
+                with open(config_path, 'r') as json_file:
+                    args.quant_config = HqqConfig(dynamic_config=json.load(json_file))
+            else:
+                if args.quantization_bit == 0:
+                    logger.info("You haven't set the quantization_bit parameter; set it to 8.")
+                    args.quantization_bit = 8
+                args.quant_config = HqqConfig(nbits=args.quantization_bit, axis=args.hqq_axis)
+        elif args.quant_method == 'eetq':
+            from transformers import EetqConfig
+            args.quant_config = EetqConfig('int8')
         model, template = prepare_model_template(args, device_map=device_map)
         if args.overwrite_generation_config:
             assert args.ckpt_dir is not None, 'args.ckpt_dir is not specified.'
@@ -320,6 +339,8 @@ def llm_infer(args: InferArguments) -> None:
                 infer_kwargs = {}
 
             read_media_file(infer_kwargs, args.infer_media_type)
+            if args.truncation_strategy:
+                infer_kwargs['truncation_strategy'] = args.truncation_strategy
             if system is None and template.use_default_system:
                 system = template.default_system
             if args.infer_backend == 'vllm':
@@ -446,6 +467,8 @@ def llm_infer(args: InferArguments) -> None:
                 kwargs['system'] = system
                 if images is not None:
                     kwargs['images'] = images
+                if args.truncation_strategy:
+                    kwargs['truncation_strategy'] = args.truncation_strategy
                 if args.infer_backend == 'vllm':
                     assert args.stream is True
                     if args.verbose:
@@ -462,6 +485,8 @@ def llm_infer(args: InferArguments) -> None:
                     response, _ = inference(
                         model, template, stream=args.stream and args.verbose, verbose=args.verbose, **kwargs)
                 label = data.pop('response', None)
+                if 'truncation_strategy' in kwargs:
+                    kwargs.pop('truncation_strategy')
                 obj = {
                     'system': kwargs['system'],
                     'query': kwargs['query'],

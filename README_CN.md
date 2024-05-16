@@ -39,7 +39,12 @@ SWIFT支持近**200种LLM和MLLM**（多模态大模型）的训练、推理、�
 
 此外，我们也在拓展其他模态的能力，目前我们支持了AnimateDiff的全参数训练和LoRA训练。
 
+SWIFT具有丰富的文档体系，如有使用问题请请查看[这里](https://github.com/modelscope/swift/tree/main/docs/source/LLM).
+
 ## 🎉 新闻
+- 🔥2024.05.13: 支持Yi-1.5系列模型，使用`--model_type yi-1_5-9b-chat`等开始体验
+- 2024.05.11: 支持使用[hqq](https://github.com/mobiusml/hqq)和[eetq](https://github.com/NetEase-FuXi/EETQ)进行qlora训练和量化推理，可以查看[LLM量化文档](https://github.com/modelscope/swift/tree/main/docs/source/LLM/LLM量化文档.md)
+- 2024.05.10: 支持序列并行. 先安装`pip install .[seq_parallel]`, 之后在DDP环境中添加`--sequence_parallel_size n`即可使用!
 - 2024.05.08: 支持DeepSeek-V2-Chat模型, 训练参考[这个脚本](https://github.com/modelscope/swift/blob/main/examples/pytorch/llm/scripts/deepseek-v2-chat/lora_ddp_ds3/sft.sh)。支持InternVL-Chat-V1.5-Int8模型，最佳实践参考[这里](https://github.com/modelscope/swift/tree/main/docs/source/Multi-Modal/internvl最佳实践.md).
 - 🔥2024.05.07: 支持**ORPO**训练，使用`swift orpo`来开始使用， 最佳实践可以查看[这里](https://github.com/modelscope/swift/tree/main/docs/source/LLM/ORPO算法最佳实践.md)
 - 2024.05.07: 支持来自xtuner的Llava-Llama3模型，model_type为`llava-llama-3-8b-v1_1`.
@@ -377,6 +382,21 @@ swift sft \
     --deepspeed default-zero3 \
 ```
 
+##### 阿里云-DLC多机训练
+DLC环境变量中，WORLD_SIZE指代node数量，RANK指代node序号，这一点和torchrun定义不同，需要注意。
+```shell
+NNODES=$WORLD_SIZE \
+NODE_RANK=$RANK \
+swift sft \
+    --model_id_or_path qwen1half-32b-chat \
+    --sft_type full \
+    --dataset blossom-math-zh \
+    --output_dir output \
+    --deepspeed default-zero3
+```
+
+
+
 
 ### 推理
 原始模型:
@@ -452,7 +472,7 @@ CUDA_VISIBLE_DEVICES=0 swift deploy \
 | LLaMA2                                              | [LLaMA2系列模型](https://github.com/facebookresearch/llama)  | 英文       | 7B-70B<br>包含量化版本      | base模型<br>chat模型                          |
 | LLaMA3               | [LLaMA3系列模型](https://github.com/meta-llama/llama3)  | 英文       | 8B-70B<br>包含量化版本      | base模型<br>chat模型              |
 | Mistral<br>Mixtral                                 | [Mistral系列模型](https://github.com/mistralai/mistral-src)  | 英文       | 7B-8x22B | base模型<br>instruct模型<br>MoE模型             |
-| YI                                                  | [01AI的YI系列模型](https://github.com/01-ai)                 | 中文<br>英文 | 6B-34B<br>包含量化版本          | base模型<br>chat模型<br>长文本模型                 |
+| Yi<br>Yi1.5                                    | [01AI的YI系列模型](https://github.com/01-ai)                 | 中文<br>英文 | 6B-34B<br>包含量化版本          | base模型<br>chat模型<br>长文本模型                 |
 | InternLM<br>InternLM2<br>InternLM2-Math                   | [浦江实验室书生浦语系列模型](https://github.com/InternLM/InternLM) | 中文<br>英文 | 1.8B-20B                  | base模型<br>chat模型<br>数学模型                  |
 | DeepSeek<br>DeepSeek-MoE<br>DeepSeek-Coder<br>DeepSeek-Math               | [幻方系列模型](https://github.com/deepseek-ai)               | 中文<br>英文 | 1.3B-236B                  | base模型<br>chat模型<br>MoE模型<br>代码模型<br>数学模型 |
 | MAMBA                                               | [MAMBA时序卷积模型](https://github.com/state-spaces/mamba)   | 英文       | 130M-2.8B                 | base模型                                    |

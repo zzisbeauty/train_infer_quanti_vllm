@@ -144,12 +144,13 @@ class ArgumentsBase:
         else:
             bnb_4bit_compute_dtype = None
         quantization_bit = self.quantization_bit
-        if quantization_bit == 4:
-            require_version('bitsandbytes')
-            load_in_4bit, load_in_8bit = True, False
-        elif quantization_bit == 8:
-            require_version('bitsandbytes')
-            load_in_4bit, load_in_8bit = False, True
+        if self.quant_method == 'bnb':
+            if quantization_bit == 4:
+                require_version('bitsandbytes')
+                load_in_4bit, load_in_8bit = True, False
+            elif quantization_bit == 8:
+                require_version('bitsandbytes')
+                load_in_4bit, load_in_8bit = False, True
         else:
             load_in_4bit, load_in_8bit = False, False
 
@@ -284,7 +285,7 @@ class ArgumentsBase:
                 if isinstance(v, str):
                     v = [v]
                 elif v is None:
-                    v = []
+                    v = [None, None]
                 if len(v) == 1:
                     v = v * 2
                 if v[0] is None and v[1] is None:
@@ -423,6 +424,7 @@ class SftArguments(ArgumentsBase):
 
     dataset: List[str] = field(
         default_factory=list, metadata={'help': f'dataset choices: {list(DATASET_MAPPING.keys())}'})
+    val_dataset: List[str] = field(default=None, metadata={'help': f'dataset choices: {list(DATASET_MAPPING.keys())}'})
     dataset_seed: int = 42
     dataset_test_ratio: float = 0.01
     use_loss_scale: bool = False  # for agent
@@ -434,10 +436,11 @@ class SftArguments(ArgumentsBase):
     model_name: List[str] = field(default_factory=lambda: [None, None], metadata={'help': "e.g. ['小黄', 'Xiao Huang']"})
     model_author: List[str] = field(
         default_factory=lambda: [None, None], metadata={'help': "e.g. ['魔搭', 'ModelScope']"})
-    # If you want to use qlora, set the quantization_bit to 8 or 4.
-    # And you need to install bitsandbytes: `pip install bitsandbytes -U`
     # note: bf16 and quantization have requirements for gpu architecture
-    quantization_bit: Literal[0, 4, 8] = 0
+    quant_method: Literal['bnb', 'hqq', 'eetq'] = None
+    quantization_bit: Literal[0, 1, 2, 3, 4, 8] = 0  # hqq: 1,2,3,4,8. bnb: 4,8
+    hqq_axis: Literal[0, 1] = 0
+    hqq_dynamic_config_path: Optional[str] = None
     bnb_4bit_comp_dtype: Literal['fp16', 'bf16', 'fp32', 'AUTO'] = 'AUTO'
     bnb_4bit_quant_type: Literal['fp4', 'nf4'] = 'nf4'
     bnb_4bit_use_double_quant: bool = True
@@ -555,8 +558,11 @@ class SftArguments(ArgumentsBase):
     save_safetensors: bool = True
     gpu_memory_fraction: Optional[float] = None
     include_num_input_tokens_seen: Optional[bool] = False
+    local_repo_path: Optional[str] = None
     custom_register_path: Optional[str] = None  # .py
     custom_dataset_info: Optional[str] = None  # .json
+
+    device_map_config_path: Optional[str] = None
 
     # generation config
     max_new_tokens: int = 2048
@@ -572,6 +578,8 @@ class SftArguments(ArgumentsBase):
     # fsdp config file
     fsdp_config: Optional[str] = None
 
+    sequence_parallel_size: int = 1
+
     # compatibility hf
     per_device_train_batch_size: Optional[int] = None
     per_device_eval_batch_size: Optional[int] = None
@@ -586,6 +594,7 @@ class SftArguments(ArgumentsBase):
     neftune_alpha: Optional[float] = None
     deepspeed_config_path: Optional[str] = None
     model_cache_dir: Optional[str] = None
+
     custom_train_dataset_path: List[str] = field(default_factory=list)
     custom_val_dataset_path: List[str] = field(default_factory=list)
 
@@ -643,6 +652,9 @@ class SftArguments(ArgumentsBase):
     def __post_init__(self) -> None:
         self.handle_compatibility()
         self._register_self_cognition()
+        if self.val_dataset is not None:
+            self.dataset_test_ratio = 0.0 if self.val_dataset is not None else self.dataset_test_ratio
+            logger.info('Using val_dataset, ignoring dataset_test_ratio')
         self._handle_dataset_sample()
         if is_pai_training_job():
             self._handle_pai_compat()
@@ -731,6 +743,18 @@ class SftArguments(ArgumentsBase):
 
         if self.save_steps is None:
             self.save_steps = self.eval_steps
+
+        # compatibility
+        if self.quantization_bit > 0 and self.quant_method is None:
+            if self.quantization_bit == 4 or self.quantization_bit == 8:
+                logger.info("Since you have specified quantization_bit as greater than 0\
+                             and have not designated a quant_method, quant_method will be set to 'bnb'.")
+                self.quant_method = 'bnb'
+            else:
+                self.quant_method = 'hqq'
+                logger.info("Since you have specified quantization_bit as greater than 0\
+                             and have not designated a quant_method, quant_method will be set to 'hqq'.")
+
         self.bnb_4bit_compute_dtype, self.load_in_4bit, self.load_in_8bit = self.select_bnb()
 
         if self.neftune_backend is None:
@@ -930,8 +954,10 @@ class InferArguments(ArgumentsBase):
     model_name: List[str] = field(default_factory=lambda: [None, None], metadata={'help': "e.g. ['小黄', 'Xiao Huang']"})
     model_author: List[str] = field(
         default_factory=lambda: [None, None], metadata={'help': "e.g. ['魔搭', 'ModelScope']"})
-
-    quantization_bit: Literal[0, 4, 8] = 0
+    quant_method: Literal['bnb', 'hqq', 'eetq'] = None
+    quantization_bit: Literal[0, 1, 2, 3, 4, 8] = 0  # hqq: 1,2,3,4,8. bnb: 4,8
+    hqq_axis: Literal[0, 1] = 0
+    hqq_dynamic_config_path: Optional[str] = None
     bnb_4bit_comp_dtype: Literal['fp16', 'bf16', 'fp32', 'AUTO'] = 'AUTO'
     bnb_4bit_quant_type: Literal['fp4', 'nf4'] = 'nf4'
     bnb_4bit_use_double_quant: bool = True
@@ -955,6 +981,7 @@ class InferArguments(ArgumentsBase):
     save_safetensors: bool = True
     overwrite_generation_config: Optional[bool] = None
     verbose: Optional[bool] = None
+    local_repo_path: Optional[str] = None
     custom_register_path: Optional[str] = None  # .py
     custom_dataset_info: Optional[str] = None  # .json
 
@@ -992,6 +1019,7 @@ class InferArguments(ArgumentsBase):
             self.load_from_ckpt_dir()
         else:
             assert self.load_dataset_config is False, 'You need to first set `--load_args_from_ckpt_dir true`.'
+        self.handle_compatibility()
         self._handle_dataset_sample()
         self.handle_custom_register()
         self.handle_custom_dataset_info()
@@ -1011,6 +1039,17 @@ class InferArguments(ArgumentsBase):
             logger.info(f'Setting self.eval_human: {self.eval_human}')
         elif self.eval_human is False and not len(self.dataset) > 0:
             raise ValueError('Please provide the dataset or set `--load_dataset_config true`.')
+
+        # compatibility
+        if self.quantization_bit > 0 and self.quant_method is None:
+            if self.quantization_bit == 4 or self.quantization_bit == 8:
+                logger.info("Since you have specified quantization_bit as greater than 0\
+                             and have not designated a quant_method, quant_method will be set to 'bnb'.")
+                self.quant_method = 'bnb'
+            else:
+                self.quant_method = 'hqq'
+                logger.info("Since you have specified quantization_bit as greater than 0\
+                             and have not designated a quant_method, quant_method will be set to 'hqq'.")
 
         self.bnb_4bit_compute_dtype, self.load_in_4bit, self.load_in_8bit = self.select_bnb()
 
@@ -1082,7 +1121,7 @@ class InferArguments(ArgumentsBase):
             value = getattr(self, key)
             if key == 'dataset' and len(value) > 0:
                 continue
-            if key == 'dataset_test_ratio' and value is not None:
+            if key in {'dataset_test_ratio', 'system'} and value is not None:
                 continue
             setattr(self, key, sft_args.get(key))
 
@@ -1151,6 +1190,11 @@ class EvalArguments(InferArguments):
     custom_eval_config: Optional[str] = None
 
     eval_use_cache: Optional[bool] = False
+
+    def select_dtype(self):
+        if self.eval_url is None:
+            return super().select_dtype()
+        return None, None, None
 
     def set_model_type(self) -> None:
         if self.eval_url is None:
