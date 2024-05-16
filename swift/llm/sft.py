@@ -1,4 +1,6 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
+
+# 执行 swift sft 核心逻辑；被API调用的代码
 import os,sys
 
 proPath = os.getcwd()
