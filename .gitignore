@@ -139,4 +139,5 @@ ast_index_file.py
 *.jsonl
 *.pick
 chatgml.jsonl
+read_demo_data.py
 untrackfiles
