@@ -136,10 +136,9 @@ ast_index_file.py
 
 
 
-untrackfiles
 
-
-# 大文件
+*.jsonl
+*.pick
 chatgml.jsonl
-giikin_this_task_data-v1
-
+read_demo_data.py
+untrackfiles

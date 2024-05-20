@@ -57,9 +57,9 @@ def handle_modules_to_save(model, args: SftArguments) -> None:
 
 
 def prepare_model(model, args: SftArguments):
-    # Preparing LoRA
-    if is_adapter(args.sft_type):
-        if args.resume_from_checkpoint is None:
+    # Preparing and 
+    if is_adapter(args.sft_type): # （LoRA）
+        if args.resume_from_checkpoint is None:  # 从头开始训练
             handle_target_modules(model, args)
             handle_modules_to_save(model, args)
             lora_kwargs = {
@@ -159,7 +159,7 @@ def prepare_model(model, args: SftArguments):
                 model = Swift.prepare_model(model, adapter_config)
                 logger.info(f'adapter_config: {adapter_config}')
         else:
-            if use_torchacc():
+            if use_torchacc(): # 断点训练，加载已有的检查点模型
                 consolidate_checkpoint(args.resume_from_checkpoint, 'adapter_model')
             model = Swift.from_pretrained(model, args.resume_from_checkpoint, is_trainable=True)
         # fix bug: Attempting to unscale FP16 gradients.
@@ -172,7 +172,7 @@ def prepare_model(model, args: SftArguments):
                     logger.info('Convert trainable parameters from fp16 to fp32.')
                     is_logging = True
                 p.data = p.data.to(dtype=torch.float32)
-    elif args.sft_type == 'full':
+    elif args.sft_type == 'full': # (full)
         if args.freeze_parameters > 0:
             freeze_model_parameters(model, args.freeze_parameters)
         if len(args.additional_trainable_parameters) > 0:
@@ -187,6 +187,9 @@ def prepare_model(model, args: SftArguments):
     else:
         raise ValueError(f'args.sft_type: {args.sft_type}')
 
+    if args.sequence_parallel_size > 1:
+        from swift.trainers.xtuner import dispatch_module_xtuner
+        dispatch_module_xtuner(model)
     if args.neftune_backend == 'swift' and args.neftune_noise_alpha not in {None, 0.}:
         neftune_config = NEFTuneConfig(noise_alpha=args.neftune_noise_alpha)
         model = Swift.prepare_model(model, {'neftune': neftune_config})
