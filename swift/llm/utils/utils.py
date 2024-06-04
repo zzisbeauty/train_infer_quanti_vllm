@@ -343,24 +343,34 @@ def stat_dataset(llm_dataset: Dataset) -> str:
 
 
 def safe_tokenizer_decode(tokenizer: PreTrainedTokenizerBase, input_ids: List[int], **tokenizer_kwargs) -> str:
+
+    def _is_special(token: int) -> bool:
+        if token < 0:
+            return True
+        if hasattr(tokenizer, 'placeholder_tokens'):
+            return token in tokenizer.placeholder_tokens_id
+        return False
+
+    if isinstance(input_ids, torch.Tensor):
+        input_ids = input_ids.tolist()
     if len(input_ids) == 0:
         return ''
     result_str = ''
     for i in range(len(input_ids)):
         if i == 0:
-            if input_ids[i] < 0:
+            if _is_special(input_ids[i]):
                 s = 0
             else:
                 e = 0
             continue
-        if input_ids[i] < 0 and input_ids[i - 1] >= 0:
+        if _is_special(input_ids[i]) and not _is_special(input_ids[i - 1]):
             s = i
             result_str += tokenizer.decode(input_ids[e:s], **tokenizer_kwargs)
-        if input_ids[i] >= 0 and input_ids[i - 1] < 0:
+        if not _is_special(input_ids[i]) and _is_special(input_ids[i - 1]):
             e = i
-            result_str += f'[-100 * {e - s}]'
-    if input_ids[-1] < 0:
-        result_str += f'[-100 * {len(input_ids) - s}]'
+            result_str += f'[{input_ids[i - 1]} * {e - s}]'
+    if _is_special(input_ids[-1]):
+        result_str += f'[{input_ids[i - 1]} * {len(input_ids) - s}]'
     else:
         result_str += tokenizer.decode(input_ids[e:], **tokenizer_kwargs)
     return result_str
@@ -393,6 +403,7 @@ def _find_layers(model: Module, module_cls: type) -> List[str]:
 
 
 def find_ln(model: Module) -> List[str]:
+    # find_layer_norm
     module_names = set()
     for name, module in model.named_modules():
         module_cls_name = module.__class__.__name__.lower()
@@ -492,8 +503,7 @@ class TokenListIteratorStreamer(BaseStreamer):
         if value.ndim > 1:
             value = value[0]
         value = value.tolist()
-        for v in value:
-            self.token_queue.put(v)
+        self.token_queue.put(value)
 
     def end(self) -> None:
         self.token_queue.put(self.stop_signal)
@@ -501,7 +511,7 @@ class TokenListIteratorStreamer(BaseStreamer):
     def __iter__(self):
         return self
 
-    def __next__(self):
+    def __next__(self) -> List[int]:
         value = self.token_queue.get(timeout=self.timeout)
         if value == self.stop_signal:
             raise StopIteration()
@@ -509,11 +519,13 @@ class TokenListIteratorStreamer(BaseStreamer):
             return value
 
 
+@torch.inference_mode()
 def inference_stream(model: PreTrainedModel,
                      template: Template,
                      query: str,
                      history: Optional[History] = None,
                      system: Optional[str] = None,
+                     images: Optional[List[str]] = None,
                      *,
                      generation_config: Optional[GenerationConfig] = None,
                      stop_words: Optional[StopWords] = None,
@@ -529,6 +541,8 @@ def inference_stream(model: PreTrainedModel,
         history = []
     else:
         history = deepcopy(history)
+    if images is None:
+        images = []
 
     # agent support
     is_observation = history[-1][-1].endswith('Observation:') if history and history[-1][-1] else False
@@ -541,12 +555,16 @@ def inference_stream(model: PreTrainedModel,
         'query': query,
         'history': history,
         'system': system,
-        'images': kwargs.pop('images', None)  # for vl. str.
+        'images': images  # for vl. str.
     }
     template.model = model
     inputs, tokenizer_kwargs = template.encode(example)
-    if len(inputs) == 0:
-        raise ValueError('input_ids exceeds `max_length`. Please increase the value of `max_length`.')
+
+    truncation_strategy = kwargs.pop('truncation_strategy', 'delete')
+    if len(inputs) == 0 and truncation_strategy == 'delete':
+        # input_ids exceeds `max_length`. Please increase the value of `max_length`.
+        return '', history
+
     inputs.pop('labels', None)
     tokenizer = template.tokenizer
     device = next(model.parameters()).device
@@ -620,8 +638,8 @@ def inference_stream(model: PreTrainedModel,
     is_finished = False
     while not is_finished:
         try:
-            token = next(streamer)
-            raw_generate_ids.append(token)
+            token_list = next(streamer)
+            raw_generate_ids += token_list
         except StopIteration:
             is_finished = True
         generate_ids = template.get_generate_ids(torch.tensor(raw_generate_ids)[None], token_len)
@@ -640,11 +658,13 @@ def inference_stream(model: PreTrainedModel,
         yield response, history
 
 
+@torch.inference_mode()
 def inference(model: PreTrainedModel,
               template: Template,
               query: str,
               history: Optional[History] = None,
               system: Optional[str] = None,
+              images: Optional[List[str]] = None,
               *,
               generation_config: Optional[GenerationConfig] = None,
               stop_words: Optional[StopWords] = None,
@@ -664,6 +684,8 @@ def inference(model: PreTrainedModel,
         history = []
     else:
         history = deepcopy(history)
+    if images is None:
+        images = []
 
     is_observation = history[-1][-1].endswith('Observation:') if history and history[-1][-1] else False
     if is_observation:
@@ -674,13 +696,14 @@ def inference(model: PreTrainedModel,
         'query': query,
         'history': history,
         'system': system,
-        'images': kwargs.pop('images', None)  # for vl. str.
+        'images': images  # for vl. str.
     }
     template.model = model
     inputs, tokenizer_kwargs = template.encode(example)
 
-    truncation_strategy = kwargs.pop('truncation_strategy', None)
+    truncation_strategy = kwargs.pop('truncation_strategy', 'delete')
     if len(inputs) == 0 and truncation_strategy == 'delete':
+        # input_ids exceeds `max_length`. Please increase the value of `max_length`.
         return '', history
 
     inputs.pop('labels', None)

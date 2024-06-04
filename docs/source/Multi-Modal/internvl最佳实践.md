@@ -20,7 +20,8 @@ pip install Pillow
 
 推理[internvl-chat-v1.5](https://www.modelscope.cn/models/AI-ModelScope/InternVL-Chat-V1-5/summary)和[internvl-chat-v1.5-int8](https://www.modelscope.cn/models/AI-ModelScope/InternVL-Chat-V1-5-int8/summary)
 
-下面教程以`internvl-chat-v1.5`为例，你可以修改`--model_type internvl-chat-v1_5-int8`来选择int8版本的模型
+下面教程以`internvl-chat-v1.5`为例，你可以修改`--model_type internvl-chat-v1_5-int8`来选择int8版本的模型，使用`mini-internvl-chat-2b-v1_5`或
+`mini-internvl-chat-4b-v1_5`来使用Mini-Internvl
 
 **注意**
 - 如果要使用本地模型文件，加上参数 `--model_id_or_path /path/to/model`
@@ -174,14 +175,14 @@ LoRA微调:
 # 80GB GPU memory
 CUDA_VISIBLE_DEVICES=0 swift sft \
     --model_type internvl-chat-v1_5 \
-    --dataset coco-mini-en-2 \
+    --dataset coco-en-2-mini \
 
 # device_map
 # Experimental environment: 2*A100...
 # 2*43GB GPU memory
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
-    --dataset coco-mini-en-2 \
+    --dataset coco-en-2-mini \
 
 # ddp + deepspeed-zero2
 # Experimental environment: 2*A100...
@@ -189,7 +190,7 @@ CUDA_VISIBLE_DEVICES=0,1 swift sft \
 NPROC_PER_NODE=2 \
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
-    --dataset coco-mini-en-2 \
+    --dataset coco-en-2-mini \
     --deepspeed default-zero2
 ```
 
@@ -200,7 +201,7 @@ CUDA_VISIBLE_DEVICES=0,1 swift sft \
 # 4 * 72 GPU memory
 CUDA_VISIBLE_DEVICES=0,1,2,3 swift sft \
     --model_type internvl-chat-v1_5 \
-    --dataset coco-mini-en-2 \
+    --dataset coco-en-2-mini \
     --sft_type full \
 ```
 

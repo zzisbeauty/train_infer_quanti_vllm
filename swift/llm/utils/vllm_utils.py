@@ -101,6 +101,19 @@ def get_vllm_engine(model_type: str,
     if version.parse(vllm.__version__) >= version.parse('0.3'):
         assert isinstance(_engine.tokenizer.tokenizer, PreTrainedTokenizerBase)
         _engine.tokenizer.tokenizer = tokenizer
+
+        # fix vllm==0.4 bug (very slow)
+        _tokenizer_len = len(tokenizer)
+        __old_len__ = tokenizer.__class__.__len__
+
+        def __len__(self) -> int:
+            if self is tokenizer:
+                return _tokenizer_len
+            else:
+                return __old_len__(self)
+
+        tokenizer.__class__.__len__ = __len__
+
     else:
         assert isinstance(_engine.tokenizer, PreTrainedTokenizerBase)
         _engine.tokenizer = tokenizer
@@ -134,6 +147,7 @@ class VllmGenerationConfig(SamplingParams):
         n: int = 1,
         length_penalty: float = 1.,
         stop: Optional[List[str]] = None,
+        skip_special_tokens: bool = False,
         **kwargs,
     ) -> None:
         # The parameter design is similar to transformers.GenerationConfig.
@@ -162,6 +176,7 @@ class VllmGenerationConfig(SamplingParams):
         kwargs['n'] = n
         kwargs['length_penalty'] = length_penalty
         kwargs['stop'] = stop
+        kwargs['skip_special_tokens'] = skip_special_tokens
         parameters = inspect.signature(SamplingParams.__init__).parameters
         for k in kwargs.copy().keys():
             if k not in parameters:
@@ -185,6 +200,7 @@ class VllmGenerationConfig(SamplingParams):
             super().__setattr__(key, value)
 
 
+@torch.inference_mode()
 def inference_stream_vllm(llm_engine: LLMEngine,
                           template: Template,
                           request_list: List[Dict[str, Any]],
@@ -227,6 +243,7 @@ def inference_stream_vllm(llm_engine: LLMEngine,
         assert lora_request is None, (
             'The current version of VLLM does not support `lora_request`. Please upgrade VLLM.')
     request_temp = []
+    resp_list = [None] * len(request_list)
     for i, request in enumerate(request_list):
         history = request.get('history', None)
         if history is None:
@@ -243,12 +260,17 @@ def inference_stream_vllm(llm_engine: LLMEngine,
 
         request['history'] = history
         inputs = template.encode(request)[0]
-        if len(inputs) == 0:
-            raise ValueError('input_ids exceeds `max_length`. Please increase the value of `max_length`.')
+        truncation_strategy = kwargs.pop('truncation_strategy', 'delete')
+        if len(inputs) == 0 and truncation_strategy == 'delete':
+            # input_ids exceeds `max_length`. Please increase the value of `max_length`.
+            resp_list[i] = {'response': '', 'history': history}
+            continue
         input_ids = inputs['input_ids']
-        llm_engine.add_request(str(i), None, generation_config, input_ids, **add_request_kwargs)
+        if version.parse(vllm.__version__) >= version.parse('0.4.3'):
+            llm_engine.add_request(str(i), {'prompt_token_ids': input_ids}, generation_config, **add_request_kwargs)
+        else:
+            llm_engine.add_request(str(i), None, generation_config, input_ids, **add_request_kwargs)
 
-    resp_list = [None] * len(request_list)
     print_idx_list = [[0] for _ in range(len(request_list))]
     prog_bar = tqdm(total=len(request_list), dynamic_ncols=True, disable=not use_tqdm)
     while llm_engine.has_unfinished_requests():
@@ -273,6 +295,7 @@ def inference_stream_vllm(llm_engine: LLMEngine,
         yield resp_list
 
 
+@torch.inference_mode()
 def inference_vllm(llm_engine: LLMEngine,
                    template: Template,
                    request_list: List[Dict[str, Any]],
@@ -315,6 +338,7 @@ def inference_vllm(llm_engine: LLMEngine,
         assert lora_request is None, (
             'The current version of VLLM does not support `lora_request`. Please upgrade VLLM.')
 
+    resp_list = [None] * len(request_list)
     for i, request in enumerate(request_list):
         history = request.get('history', None)
         if history is None:
@@ -326,10 +350,16 @@ def inference_vllm(llm_engine: LLMEngine,
             request['query'] = None
         request['history'] = history
         inputs = template.encode(request)[0]
-        if len(inputs) == 0:
-            raise ValueError('input_ids exceeds `max_length`. Please increase the value of `max_length`.')
+        truncation_strategy = kwargs.pop('truncation_strategy', 'delete')
+        if len(inputs) == 0 and truncation_strategy == 'delete':
+            # input_ids exceeds `max_length`. Please increase the value of `max_length`.
+            resp_list[i] = {'response': '', 'history': history}
+            continue
         input_ids = inputs['input_ids']
-        llm_engine.add_request(str(i), None, generation_config, input_ids, **add_request_kwargs)
+        if version.parse(vllm.__version__) >= version.parse('0.4.3'):
+            llm_engine.add_request(str(i), {'prompt_token_ids': input_ids}, generation_config, **add_request_kwargs)
+        else:
+            llm_engine.add_request(str(i), None, generation_config, input_ids, **add_request_kwargs)
 
     if use_tqdm is True:
         assert verbose is False
@@ -342,7 +372,6 @@ def inference_vllm(llm_engine: LLMEngine,
                 outputs.append(output)
                 prog_bar.update()
 
-    resp_list = [None] * len(request_list)
     for output in outputs:
         i = int(output.request_id)
         request = request_list[i]

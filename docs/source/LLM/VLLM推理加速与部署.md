@@ -18,7 +18,7 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip install 'ms-swift[llm]' -U
 
 # vllm与cuda版本有对应关系，请按照`https://docs.vllm.ai/en/latest/getting_started/installation.html`选择版本
-pip install vllm -U
+pip install vllm
 pip install openai -U
 
 # 环境对齐 (通常不需要运行. 如果你运行错误, 可以跑下面的代码, 仓库使用最新环境测试)
@@ -484,7 +484,7 @@ CUDA_VISIBLE_DEVICES=0 swift deploy --ckpt_dir 'xxx/vx-xxx/checkpoint-xxx-merged
 
 客户端示例代码同原始模型.
 
-### 多LoRA部署
+## 多LoRA部署
 
 目前pt方式部署模型已经支持`peft>=0.10.0`进行多LoRA部署，具体方法为：
 
@@ -527,15 +527,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 \
 NPROC_PER_NODE=4 \
 swift sft \
     --model_type llama2-7b-chat \
-    --dataset sharegpt-gpt4-mini \
-    --train_dataset_sample 1000 \
+    --dataset self-cognition#500 sharegpt-gpt4-mini#1000 \
     --logging_steps 5 \
     --max_length 4096 \
     --learning_rate 5e-5 \
     --warmup_ratio 0.4 \
     --output_dir output \
     --lora_target_modules ALL \
-    --self_cognition_sample 500 \
     --model_name 小黄 'Xiao Huang' \
     --model_author 魔搭 ModelScope \
 ```

@@ -1,3 +1,4 @@
+import os
 from typing import Type
 
 import gradio as gr
@@ -68,7 +69,7 @@ class Dataset(BaseUI):
             },
             'info': {
                 'zh': '从训练集中采样一定行数进行训练',
-                'en': 'Train with the sample size from the dataset'
+                'en': 'Train with the sample size from the dataset',
             }
         },
         'val_dataset_sample': {
@@ -78,7 +79,7 @@ class Dataset(BaseUI):
             },
             'info': {
                 'zh': '从验证集中采样一定行数进行训练',
-                'en': 'Validate with the sample size from the dataset'
+                'en': 'Validate with the sample size from the dataset',
             }
         },
         'truncation_strategy': {
@@ -94,11 +95,11 @@ class Dataset(BaseUI):
         'custom_dataset_info': {
             'label': {
                 'zh': '外部数据集配置',
-                'en': 'An outer dataset config'
+                'en': 'Custom dataset config'
             },
             'info': {
                 'zh': '注册外部数据集的配置文件',
-                'en': 'How to deal with the rows exceed the max length'
+                'en': 'An extra dataset config to register your own datasets'
             }
         },
     }
