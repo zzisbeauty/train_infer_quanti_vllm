@@ -46,8 +46,8 @@ class Model(BaseUI):
                 'en': 'Model id or path'
             },
             'info': {
-                'zh': '实际的模型id',
-                'en': 'The actual model id or model path'
+                'zh': '实际的模型id，如果是训练后的模型请填入checkpoint-xxx的目录',
+                'en': 'The actual model id or path, if is a trained model, please fill in the checkpoint-xxx dir'
             }
         },
         'template_type': {
@@ -68,6 +68,16 @@ class Model(BaseUI):
             'info': {
                 'zh': 'system字段支持在加载模型后修改',
                 'en': 'system can be modified after the model weights loaded'
+            }
+        },
+        'merge_lora': {
+            'label': {
+                'zh': '合并lora',
+                'en': 'merge lora'
+            },
+            'info': {
+                'zh': '仅在sft_type=lora时可用',
+                'en': 'Only available when sft_type=lora'
             }
         },
         'more_params': {
@@ -100,6 +110,7 @@ class Model(BaseUI):
             model_id_or_path = gr.Textbox(elem_id='model_id_or_path', lines=1, scale=20, interactive=True)
             template_type = gr.Dropdown(
                 elem_id='template_type', choices=list(TEMPLATE_MAPPING.keys()) + ['AUTO'], scale=20)
+            gr.Checkbox(elem_id='merge_lora', scale=4)
             reset_btn = gr.Button(elem_id='reset', scale=2)
             model_state = gr.State({})
         with gr.Row():

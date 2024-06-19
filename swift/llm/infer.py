@@ -28,7 +28,8 @@ def save_checkpoint(model: Optional[PreTrainedModel],
                     ckpt_dir: Optional[str],
                     target_dir: str,
                     *,
-                    save_safetensors: bool = True) -> None:
+                    save_safetensors: bool = True,
+                    **kwargs) -> None:
     if model is not None:
         model.save_pretrained(target_dir, safe_serialization=save_safetensors)
     if hasattr(tokenizer, 'processor'):
@@ -74,6 +75,9 @@ def save_checkpoint(model: Optional[PreTrainedModel],
             with open(old_sft_args_path, 'r', encoding='utf-8') as f:
                 res = json.load(f)
             res['sft_type'] = 'full'
+            dtype = kwargs.get('dtype')
+            if dtype is not None:
+                res['dtype'] = dtype
             with open(new_sft_args_path, 'w', encoding='utf-8') as f:
                 json.dump(res, f, ensure_ascii=False, indent=2)
 
@@ -98,7 +102,10 @@ def merge_lora(args: InferArguments,
                     'skipping the saving process. '
                     'you can pass `replace_if_exists=True` to overwrite it.')
     else:
-        model, template = prepare_model_template(args, device_map=args.merge_device_map, verbose=False)
+        if device_map is None:
+            device_map = args.merge_device_map
+        logger.info(f'merge_device_map: {device_map}')
+        model, template = prepare_model_template(args, device_map=device_map, verbose=False)
         logger.info('Merge LoRA...')
         Swift.merge_and_unload(model)
         model = model.model
@@ -109,7 +116,8 @@ def merge_lora(args: InferArguments,
             model.model_dir,
             args.ckpt_dir,
             merged_lora_path,
-            save_safetensors=args.save_safetensors)
+            save_safetensors=args.save_safetensors,
+            dtype=args.dtype)
         logger.info(f'Successfully merged LoRA and saved in {merged_lora_path}.')
     logger.info("Setting args.sft_type: 'full'")
     logger.info(f'Setting args.ckpt_dir: {merged_lora_path}')
@@ -163,6 +171,9 @@ def prepare_model_template(args: InferArguments,
         kwargs['automodel_class'] = automodel_class
     if args.local_repo_path:
         kwargs['local_repo_path'] = args.local_repo_path
+    if args.rope_scaling:
+        kwargs['rope_scaling'] = args.rope_scaling
+        kwargs['max_length'] = args.max_length
     model, tokenizer = get_model_tokenizer(
         args.model_type,
         args.torch_dtype,
@@ -208,9 +219,14 @@ def prepare_model_template(args: InferArguments,
         show_layers(model)
         logger.info(model)
     logger.info(get_model_info(model))
-
     template: Template = get_template(
-        args.template_type, tokenizer, args.system, args.max_length, args.truncation_strategy, model=model)
+        args.template_type,
+        tokenizer,
+        args.system,
+        args.max_length,
+        args.truncation_strategy,
+        model=model,
+        tools_prompt=args.tools_prompt)
     args.system = template.default_system
     logger.info(f'system: {args.system}')
     return model, template
@@ -223,8 +239,7 @@ def read_media_file(infer_kwargs: Dict[str, Any], infer_media_type: Literal['non
         return
     if infer_media_type == 'round' or len(images) == 0:
         image = input(text)
-        if len(image) > 0:
-            images += [image]
+        images += [image or None]
     if len(images) > 0:
         infer_kwargs['images'] = images
 
@@ -471,6 +486,7 @@ def llm_infer(args: InferArguments) -> None:
                 history = data.get('history')
                 system = data.get('system')
                 images = data.get('images')
+                tools = data.get('tools')
                 if args.verbose and system is not None:
                     print(f'[SYSTEM]{system}')
                 if history is None:
@@ -481,6 +497,8 @@ def llm_infer(args: InferArguments) -> None:
                 kwargs['system'] = system
                 if images is not None:
                     kwargs['images'] = images
+                if tools is not None:
+                    kwargs['tools'] = tools
                 if args.truncation_strategy:
                     kwargs['truncation_strategy'] = args.truncation_strategy
                 if args.infer_backend == 'vllm':
@@ -516,7 +534,7 @@ def llm_infer(args: InferArguments) -> None:
                     print(f'[LABELS]{label}')
                     if images is not None:
                         print(f'[IMAGES]{images}')
-                    print('-' * 50)
+                    print('-' * 50, flush=True)
     if jsonl_path is not None:
         logger.info(f'save_result_path: {jsonl_path}')
     if not args.eval_human and args.show_dataset_sample == 10:  # is default

@@ -1,7 +1,9 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
+import datetime as dt
 import inspect
 import math
 import os
+import platform
 import sys
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Set, Tuple, Union
@@ -22,6 +24,7 @@ from swift.trainers import Seq2SeqTrainingArguments
 from swift.tuners import Swift
 from swift.utils import (add_version_to_work_dir, get_dist_setting, get_logger, get_pai_tensorboard_dir, is_dist,
                          is_local_master, is_mp, is_pai_training_job, use_torchacc)
+from .client_utils import get_model_list_client
 from .dataset import (DATASET_MAPPING, _dataset_name_exists, get_dataset, parse_dataset_name,
                       register_dataset_info_file, sample_dataset)
 from .model import (MODEL_MAPPING, dtype_mapping, get_additional_saved_files, get_default_lora_target_modules,
@@ -80,6 +83,8 @@ class ArgumentsBase:
             logger.warning(f'use_flash_attn: {self.use_flash_attn}, ' f'but support_flash_attn: {support_flash_attn}')
 
     def handle_generation_config(self: Union['SftArguments', 'InferArguments']) -> None:
+        if self.temperature == 0:
+            self.do_sample = False
         if self.do_sample is False:
             # fix warning
             self.temperature = 1.
@@ -152,6 +157,10 @@ class ArgumentsBase:
             elif quantization_bit == 8:
                 require_version('bitsandbytes')
                 load_in_4bit, load_in_8bit = False, True
+            else:
+                logger.warning('bnb only support 4/8 bits quantization, you should assign --quantization_bit 4 or 8,\
+                    Or specify another quantization method; No quantization will be performed here.')
+                load_in_4bit, load_in_8bit = False, False
         else:
             load_in_4bit, load_in_8bit = False, False
 
@@ -194,7 +203,7 @@ class ArgumentsBase:
                 for sn in DATASET_MAPPING['toolbench-for-alpha-umi']['subsets']
             },
             'medical-mini-zh': 'medical-zh#50000',
-            'cmnli-mini-zh': 'cmnli-zh#20000/200',
+            'cmnli-mini-zh': 'cmnli-zh#20000',
             'coco-mini-en': 'coco-en-mini',
             'coco-mini-en-2': 'coco-en-2-mini',
             'aishell1-mini-zh': 'aishell1-zh-mini',
@@ -263,6 +272,8 @@ class ArgumentsBase:
                 self.eval_batch_size = self.per_device_eval_batch_size
             if self.deepspeed_config_path is not None:
                 self.deepspeed = self.deepspeed_config_path
+            if self.eval_strategy is not None:
+                self.evaluation_strategy = self.eval_strategy
 
     def handle_custom_dataset_info(self):
         if self.custom_dataset_info is None:
@@ -278,9 +289,10 @@ class ArgumentsBase:
         train_sample = parse_dataset_name(_dataset)[3]
         if train_sample == -1:
             train_sample = self.train_dataset_sample
-        elif self.train_dataset_sample < train_sample:
+        else:
             _dataset = _dataset[:_dataset.find('#')]
-            train_sample = self.train_dataset_sample
+            if self.train_dataset_sample < train_sample:
+                train_sample = self.train_dataset_sample
         _dataset = f'{_dataset}#{train_sample}'
         self.dataset[0] = _dataset
         self.train_dataset_sample = -1
@@ -391,7 +403,7 @@ class ArgumentsBase:
                     raise ValueError('Please use `--ckpt_dir vx-xxx/checkpoint-xxx` to use the checkpoint.')
                 if self.model_type is None:
                     raise ValueError(f"model_id_or_path: '{model_id_or_path}' is not registered. "
-                                     'Please set `--model_type <model_type>` additionally.')
+                                     'Please set `--model_type <model_type> --model_id_or_path <model_id_or_path>`.')
                 assert self.model_cache_dir is None
 
         error_msg = f'The model_type you can choose: {list(MODEL_MAPPING.keys())}'
@@ -436,6 +448,7 @@ class SftArguments(ArgumentsBase):
 
     seed: int = 42
     resume_from_checkpoint: Optional[str] = None
+    resume_only_model: bool = False
     ignore_data_skip: bool = False
     dtype: Literal['bf16', 'fp16', 'fp32', 'AUTO'] = 'AUTO'
     packing: bool = False
@@ -448,7 +461,9 @@ class SftArguments(ArgumentsBase):
     dataset_seed: int = 42
     dataset_test_ratio: float = 0.01
     use_loss_scale: bool = False  # for agent
+    loss_scale_config_path: str = 'DEFAULT'
     system: Optional[str] = None
+    tools_prompt: Literal['react_en', 'react_zh', 'toolbench'] = 'react_en'
     max_length: int = 2048  # -1: no limit
     truncation_strategy: Literal['delete', 'truncation_left'] = 'delete'
     check_dataset_strategy: Literal['none', 'discard', 'error', 'warning'] = 'none'
@@ -481,6 +496,9 @@ class SftArguments(ArgumentsBase):
     use_dora: bool = False
     # Literal['gaussian', 'pissa', 'pissa_niter_[number of iters]', 'loftq', 'true', 'false']
     init_lora_weights: str = 'true'
+
+    # rope-scaling
+    rope_scaling: Literal['linear', 'dynamic'] = None
 
     # BOFT
     boft_block_size: int = 4
@@ -548,6 +566,7 @@ class SftArguments(ArgumentsBase):
     optim: str = 'adamw_torch'
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
+    adam_epsilon: float = 1e-8
     learning_rate: Optional[float] = None
     weight_decay: float = 0.1
     gradient_accumulation_steps: Optional[int] = None
@@ -561,7 +580,7 @@ class SftArguments(ArgumentsBase):
     save_only_model: Optional[bool] = None
     save_total_limit: int = 2  # save last and best. -1: all checkpoints
     logging_steps: int = 5
-    dataloader_num_workers: int = 1
+    dataloader_num_workers: Optional[int] = None
     dataloader_pin_memory: bool = True
     dataloader_drop_last: bool = False
 
@@ -630,6 +649,7 @@ class SftArguments(ArgumentsBase):
     # compatibility hf
     per_device_train_batch_size: Optional[int] = None
     per_device_eval_batch_size: Optional[int] = None
+    eval_strategy: Literal['steps', 'epoch', 'no', None] = None
     # compatibility. (Deprecated)
     self_cognition_sample: int = 0
     train_dataset_mix_ratio: float = 0.
@@ -644,6 +664,27 @@ class SftArguments(ArgumentsBase):
 
     custom_train_dataset_path: List[str] = field(default_factory=list)
     custom_val_dataset_path: List[str] = field(default_factory=list)
+
+    def load_from_checkpoint(self) -> None:
+        # resume_from_checkpoint: reading the model architecture
+        sft_args_path = os.path.join(self.resume_from_checkpoint, 'sft_args.json')
+        if not os.path.exists(sft_args_path):
+            logger.info(f'{sft_args_path} not found')
+            return
+        with open(sft_args_path, 'r', encoding='utf-8') as f:
+            sft_args = json.load(f)
+        imported_keys = [
+            'model_type', 'model_revision', 'quantization_bit', 'dtype', 'bnb_4bit_comp_dtype', 'bnb_4bit_quant_type',
+            'bnb_4bit_use_double_quant', 'model_id_or_path'
+        ]
+
+        for key in imported_keys:
+            value = getattr(self, key)
+            if key in {'dtype', 'bnb_4bit_comp_dtype'} and value != 'AUTO':
+                continue
+            if key in {'model_type', 'model_revision', 'model_id_or_path'} and value is not None:
+                continue
+            setattr(self, key, sft_args.get(key))
 
     def prepare_push_ms_hub(self) -> None:
         if not self.push_to_hub:
@@ -713,12 +754,23 @@ class SftArguments(ArgumentsBase):
             if self.deepspeed == ds_name:
                 self.deepspeed = os.path.join(ds_config_folder, ds_config)
                 break
-
+        if self.loss_scale_config_path:
+            if self.loss_scale_config_path == 'DEFAULT':
+                self.loss_scale_config_path = os.path.abspath(
+                    os.path.join(__file__, '..', '..', 'agent', 'default_loss_scale_config.json'))
+            elif self.loss_scale_config_path == 'alpha-umi':  # https://arxiv.org/pdf/2401.07324
+                self.loss_scale_config_path = os.path.abspath(
+                    os.path.join(__file__, '..', '..', 'agent', 'alpha_umi_loss_scale_config.json'))
+            elif self.loss_scale_config_path == 'agent-flan':  # https://arxiv.org/abs/2403.12881
+                self.loss_scale_config_path = os.path.abspath(
+                    os.path.join(__file__, '..', '..', 'agent', 'agentflan.json'))
         self.handle_path()
         self._handle_dataset_sample()
         self._register_self_cognition()
         self.handle_custom_register()
         self.handle_custom_dataset_info()
+        if self.resume_from_checkpoint is not None:
+            self.load_from_checkpoint()
         self.set_model_type()
         self.check_flash_attn()
         self.handle_generation_config()
@@ -843,8 +895,13 @@ class SftArguments(ArgumentsBase):
         if self.lazy_tokenize is None:
             self.lazy_tokenize = template_info.get('lazy_tokenize', False)
             logger.info(f'Setting args.lazy_tokenize: {self.lazy_tokenize}')
-        if 'dataloader_num_workers' in template_info:
-            self.dataloader_num_workers = template_info['dataloader_num_workers']
+        if self.dataloader_num_workers is None:
+            if 'dataloader_num_workers' in template_info:
+                self.dataloader_num_workers = template_info['dataloader_num_workers']
+            elif platform.system() == 'Windows':
+                self.dataloader_num_workers = 0
+            else:
+                self.dataloader_num_workers = 1
             logger.info(f'Setting args.dataloader_num_workers: {self.dataloader_num_workers}')
         if 'dataloader_pin_memory' in template_info:
             self.dataloader_pin_memory = template_info['dataloader_pin_memory']
@@ -889,10 +946,13 @@ class SftArguments(ArgumentsBase):
         parameters = inspect.signature(Seq2SeqTrainingArguments.__init__).parameters
         if 'include_num_input_tokens_seen' in parameters:
             kwargs['include_num_input_tokens_seen'] = self.include_num_input_tokens_seen
+        if 'eval_strategy' in parameters:
+            kwargs['eval_strategy'] = self.evaluation_strategy
+        else:
+            kwargs['evaluation_strategy'] = self.evaluation_strategy
 
         training_args = Seq2SeqTrainingArguments(
             output_dir=self.output_dir,
-            evaluation_strategy=self.evaluation_strategy,
             logging_dir=self.logging_dir,
             per_device_train_batch_size=self.batch_size,
             per_device_eval_batch_size=self.eval_batch_size,
@@ -920,6 +980,7 @@ class SftArguments(ArgumentsBase):
             optim=self.optim,
             adam_beta1=self.adam_beta1,
             adam_beta2=self.adam_beta2,
+            adam_epsilon=self.adam_epsilon,
             hub_model_id=self.hub_model_id,
             hub_private_repo=self.hub_private_repo,
             push_hub_strategy=self.push_hub_strategy,
@@ -930,7 +991,6 @@ class SftArguments(ArgumentsBase):
             ddp_backend=self.ddp_backend,
             gradient_checkpointing=self.gradient_checkpointing,
             predict_with_generate=self.predict_with_generate,
-            # generation_config=generation_config,
             local_rank=get_dist_setting()[1],
             save_only_model=self.save_only_model,
             train_sampler_random=self.train_sampler_random,
@@ -1006,6 +1066,7 @@ class InferArguments(ArgumentsBase):
     show_dataset_sample: int = 10
     save_result: bool = True
     system: Optional[str] = None
+    tools_prompt: Literal['react_en', 'react_zh', 'toolbench'] = 'react_en'
     max_length: int = -1  # -1: no limit
     truncation_strategy: Literal['delete', 'truncation_left'] = 'delete'
     check_dataset_strategy: Literal['none', 'discard', 'error', 'warning'] = 'none'
@@ -1031,6 +1092,9 @@ class InferArguments(ArgumentsBase):
     num_beams: int = 1
     stop_words: List[str] = None
 
+    # rope-scaling
+    rope_scaling: Literal['linear', 'dynamic'] = None
+
     # other
     use_flash_attn: Optional[bool] = None
     ignore_args_error: bool = False  # True: notebook compatibility
@@ -1049,6 +1113,8 @@ class InferArguments(ArgumentsBase):
     gpu_memory_utilization: float = 0.9
     tensor_parallel_size: int = 1
     max_model_len: Optional[int] = None
+    disable_custom_all_reduce: bool = True  # Default values different from vllm
+    enforce_eager: bool = False
     vllm_enable_lora: bool = False
     vllm_max_lora_rank: int = 16
     lora_modules: List[str] = field(default_factory=list)
@@ -1170,7 +1236,7 @@ class InferArguments(ArgumentsBase):
             sft_args = json.load(f)
         imported_keys = [
             'model_type', 'model_revision', 'sft_type', 'template_type', 'system', 'quantization_bit',
-            'bnb_4bit_comp_dtype', 'bnb_4bit_quant_type', 'bnb_4bit_use_double_quant'
+            'bnb_4bit_comp_dtype', 'bnb_4bit_quant_type', 'bnb_4bit_use_double_quant', 'rope_scaling'
         ]
         if self.load_dataset_config:
             imported_keys += [
@@ -1238,23 +1304,31 @@ class DeployArguments(InferArguments):
 @dataclass
 class EvalArguments(InferArguments):
 
-    name: Optional[str] = None
-
-    eval_url: Optional[str] = None
-
-    eval_token: Optional[str] = 'EMPTY'
-
-    eval_is_chat_model: bool = None
-
-    eval_dataset: List[str] = field(default_factory=lambda: ['ceval', 'gsm8k', 'arc'])
-
+    eval_dataset: List[str] = field(
+        default_factory=lambda: ['ceval', 'gsm8k', 'arc'],
+        metadata={'help': f"dataset choices: {['arc', 'gsm8k', 'mmlu', 'cmmlu', 'ceval', 'bbh', 'general_qa']}"})
     eval_few_shot: Optional[int] = None
-
     eval_limit: Optional[int] = None
 
-    custom_eval_config: Optional[str] = None
+    name: str = field(default_factory=lambda: dt.datetime.now().strftime('%Y%m%d-%H%M%S'))
+    eval_url: Optional[str] = None
+    eval_token: str = 'EMPTY'
+    eval_is_chat_model: Optional[bool] = None
+    custom_eval_config: Optional[str] = None  # path
+    eval_use_cache: bool = False
 
-    eval_use_cache: Optional[bool] = False
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.eval_dataset, str):
+            self.eval_dataset = [self.eval_dataset]
+        if len(self.eval_dataset) == 1 and self.eval_dataset[0] == 'no':
+            self.eval_dataset = []
+        if self.eval_url is not None and (self.eval_is_chat_model is None or self.model_type is None):
+            model = get_model_list_client(url=self.eval_url).data[0]
+            if self.eval_is_chat_model is None:
+                self.eval_is_chat_model = model.is_chat
+            if self.model_type is None is None:
+                self.model_type = model.id
 
     def select_dtype(self):
         if self.eval_url is None:
@@ -1323,30 +1397,87 @@ class ExportArguments(InferArguments):
 
 
 @dataclass
-class DPOArguments(SftArguments):
-
+class RLHFArguments(SftArguments):
+    rlhf_type: Literal['dpo', 'orpo', 'simpo', 'kto', 'cpo'] = 'dpo'
     ref_model_type: Optional[str] = field(
         default=None, metadata={'help': f'model_type choices: {list(MODEL_MAPPING.keys())}'})
 
     ref_model_id_or_path: Optional[str] = None
-
+    ref_model_free: bool = False
     max_prompt_length: int = 1024
-    beta: float = 0.1
+    beta: Optional[float] = None
     label_smoothing: float = 0.0
-    loss_type: Literal['sigmoid', 'hinge', 'ipo', 'kto_pair'] = 'sigmoid'
+    loss_type: Optional[Literal['sigmoid', 'hinge', 'ipo', 'kto_pair', 'robust', 'bco_pair', 'sppo_hard', 'nca_pair',
+                                'simpo', 'kto', 'bco']] = None
     sft_beta: float = 0.1
+    simpo_gamma: float = 1.0  # reward margin hyperparameter in SimPO
+    # KTO
+    desirable_weight: float = 1.0
+    undesirable_weight: float = 1.0
 
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # without reference model
+        self.ref_model_free = self.rlhf_type in ['orpo', 'simpo', 'cpo']
+        if self.rlhf_type == 'simpo':
+            self.loss_type = 'simpo'  # compatibility with trl > 0.9.5
+            self.gamma = self.simpo_gamma  # compatibility with trl <= 0.9.4
+        self.set_default_beta()
+        self.set_default_config()
+        self.set_default_loss_type()
+        self.check_loss_type()
 
-@dataclass
-class SimPOArguments(DPOArguments):
-    beta: float = 2.0
-    gamma: float = 1.0
+    def set_default_beta(self):
+        if self.beta is None:
+            if self.rlhf_type in ['dpo', 'orpo', 'kto', 'cpo']:
+                self.beta = 0.1
+            elif self.rlhf_type == 'simpo':
+                self.beta = 2.0
 
+    def set_default_config(self):
+        from importlib import import_module
+        from dataclasses import fields, MISSING
+        CONFIG_MAPPING = {
+            'orpo': 'trl.trainer.orpo_config.ORPOConfig',
+            'kto': 'trl.trainer.kto_config.KTOConfig',
+            'simpo': 'trl.trainer.cpo_config.CPOConfig',
+            'cpo': 'trl.trainer.cpo_config.CPOConfig',
+            'dpo': 'trl.trainer.dpo_config.DPOConfig'
+        }
 
-@dataclass
-class ORPOArguments(SftArguments):
-    max_prompt_length: int = 1024
-    beta: float = 0.1
+        if self.rlhf_type in CONFIG_MAPPING:
+            config_path = CONFIG_MAPPING[self.rlhf_type]
+            module_path, config_name = config_path.rsplit('.', 1)
+            config_module = import_module(module_path)
+            cls = getattr(config_module, config_name, None)
+            assert cls is not None
+            for f in fields(cls):
+                if hasattr(self.training_args, f.name):
+                    continue
+                elif hasattr(self, f.name):
+                    setattr(self.training_args, f.name, getattr(self, f.name))
+                elif f.default != MISSING:
+                    setattr(self.training_args, f.name, f.default)
+                elif f.default_factory != MISSING:
+                    setattr(self.training_args, f.name, f.default_factory())
+
+    def check_loss_type(self):
+        supported_loss_types = {
+            'dpo': ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'bco_pair', 'sppo_hard', 'nca_pair', 'robust'],
+            'cpo': ['sigmoid', 'hinge', 'ipo', 'kto_pair', 'simpo'],
+            'kto': ['kto', 'bco']
+        }
+        if self.rlhf_type in supported_loss_types:
+            assert self.loss_type in supported_loss_types.get(self.rlhf_type), \
+                f"algo {self.rlhf_type} doesn't support loss type {self.loss_type}"
+
+    def set_default_loss_type(self):
+        if self.loss_type is not None:
+            return
+        if self.rlhf_type in ['dpo', 'cpo']:
+            self.loss_type = 'sigmoid'
+        elif self.rlhf_type == 'kto':
+            self.loss_type = 'kto'
 
 
 @dataclass

@@ -26,14 +26,17 @@ The tutorial below takes `internvl-chat-v1.5` as an example, and you can change 
 **Note**
 - If you want to use a local model file, add the argument --model_id_or_path /path/to/model.
 - If your GPU does not support flash attention, use the argument --use_flash_attn false. And for int8 models, it is necessary to specify `dtype --bf16` during inference, otherwise the output may be garbled.
+- The model's configuration specifies a relatively small max_length of 2048, which can be modified by setting `--max_length`.
+- Memory consumption can be reduced by using the parameter `--gradient_checkpointing true`.
+- The InternVL series of models only support training on datasets that include images.
 
 ```shell
 # Experimental environment: A100
 # 55GB GPU memory
-CUDA_VISIBLE_DEVICES=0 swift infer --model_type internvl-chat-v1_5 --dtype bf16
+CUDA_VISIBLE_DEVICES=0 swift infer --model_type internvl-chat-v1_5 --dtype bf16 --max_length 4096
 
 # 2*30GB GPU memory
-CUDA_VISIBLE_DEVICES=0,1 swift infer --model_type internvl-chat-v1_5 --dtype bf16
+CUDA_VISIBLE_DEVICES=0,1 swift infer --model_type internvl-chat-v1_5 --dtype bf16 --max_length 4096
 ```
 
 Output: (supports passing in local path or URL)
@@ -43,14 +46,17 @@ Output: (supports passing in local path or URL)
 Input a media path or URL <<<  http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/cat.png
 This is a high-resolution image of a kitten. The kitten has striking blue eyes and a fluffy white and grey coat. The fur pattern suggests that it may be a Maine Coon or a similar breed. The kitten's ears are perked up, and it has a curious and innocent expression. The background is blurred, which brings the focus to the kitten's face.
 --------------------------------------------------
+<<< clear
 <<< How many sheep are in the picture?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/animal.png
 There are four sheep in the picture.
 --------------------------------------------------
+<<< clear
 <<< What is the calculation result?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/math.png
 The calculation result is 59,856.
 --------------------------------------------------
+<<< clear
 <<< Write a poem based on the content of the picture.
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/poem.png
 Token indices sequence length is longer than the specified maximum sequence length for this model (5142 > 4096). Running this sequence through the model will result in indexing errors
@@ -178,6 +184,7 @@ LoRA fine-tuning:
 CUDA_VISIBLE_DEVICES=0 swift sft \
     --model_type internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096
 
 # device_map
 # Experimental environment: 2*A100...
@@ -185,6 +192,7 @@ CUDA_VISIBLE_DEVICES=0 swift sft \
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096
 
 # ddp + deepspeed-zero2
 # Experimental environment: 2*A100...
@@ -193,6 +201,7 @@ NPROC_PER_NODE=2 \
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096 \
     --deepspeed default-zero2
 ```
 
@@ -205,6 +214,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 swift sft \
     --model_type internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
     --sft_type full \
+    --max_length 4096
 ```
 
 [Custom datasets](../LLM/Customization.md#-Recommended-Command-line-arguments)  support json, jsonl formats. Here is an example of a custom dataset:
@@ -223,7 +233,8 @@ Direct inference:
 ```shell
 CUDA_VISIBLE_DEVICES=0 swift infer \
     --ckpt_dir output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 ```
 
 **merge-lora** and inference:
@@ -234,10 +245,12 @@ CUDA_VISIBLE_DEVICES=0 swift export \
 
 CUDA_VISIBLE_DEVICES=0 swift infer \
     --ckpt_dir "output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx-merged" \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 
 # device map
 CUDA_VISIBLE_DEVICES=0,1 swift infer \
     --ckpt_dir "output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx-merged" \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 ```

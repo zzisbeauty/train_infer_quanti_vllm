@@ -26,14 +26,17 @@ pip install Pillow
 **注意**
 - 如果要使用本地模型文件，加上参数 `--model_id_or_path /path/to/model`
 - 如果你的GPU不支持flash attention, 使用参数`--use_flash_attn false`。且对于int8模型，推理时需要指定`dtype --bf16`, 否则可能会出现乱码
+- 模型本身config中的max_length较小，为2048，可以设置`--max_length`来修改
+- 可以使用参数`--gradient_checkpoting true`减少显存占用
+- InternVL系列模型的**训练**只支持带有图片的数据集
 
 ```shell
 # Experimental environment: A100
 # 55GB GPU memory
-CUDA_VISIBLE_DEVICES=0 swift infer --model_type internvl-chat-v1_5 --dtype bf16
+CUDA_VISIBLE_DEVICES=0 swift infer --model_type internvl-chat-v1_5 --dtype bf16 --max_length 4096
 
 # 2*30GB GPU memory
-CUDA_VISIBLE_DEVICES=0,1 swift infer --model_type internvl-chat-v1_5 --dtype bf16
+CUDA_VISIBLE_DEVICES=0,1 swift infer --model_type internvl-chat-v1_5 --dtype bf16 --max_length 4096
 ```
 
 输出: (支持传入本地路径或URL)
@@ -43,14 +46,17 @@ CUDA_VISIBLE_DEVICES=0,1 swift infer --model_type internvl-chat-v1_5 --dtype bf1
 Input a media path or URL <<<  http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/cat.png
 This is a high-resolution image of a kitten. The kitten has striking blue eyes and a fluffy white and grey coat. The fur pattern suggests that it may be a Maine Coon or a similar breed. The kitten's ears are perked up, and it has a curious and innocent expression. The background is blurred, which brings the focus to the kitten's face.
 --------------------------------------------------
+<<< clear
 <<< How many sheep are in the picture?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/animal.png
 There are four sheep in the picture.
 --------------------------------------------------
+<<< clear
 <<< What is the calculation result?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/math.png
 The calculation result is 59,856.
 --------------------------------------------------
+<<< clear
 <<< Write a poem based on the content of the picture.
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/poem.png
 Token indices sequence length is longer than the specified maximum sequence length for this model (5142 > 4096). Running this sequence through the model will result in indexing errors
@@ -176,6 +182,7 @@ LoRA微调:
 CUDA_VISIBLE_DEVICES=0 swift sft \
     --model_type internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096
 
 # device_map
 # Experimental environment: 2*A100...
@@ -183,6 +190,7 @@ CUDA_VISIBLE_DEVICES=0 swift sft \
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096
 
 # ddp + deepspeed-zero2
 # Experimental environment: 2*A100...
@@ -191,6 +199,7 @@ NPROC_PER_NODE=2 \
 CUDA_VISIBLE_DEVICES=0,1 swift sft \
     --model_type  internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096 \
     --deepspeed default-zero2
 ```
 
@@ -202,6 +211,7 @@ CUDA_VISIBLE_DEVICES=0,1 swift sft \
 CUDA_VISIBLE_DEVICES=0,1,2,3 swift sft \
     --model_type internvl-chat-v1_5 \
     --dataset coco-en-2-mini \
+    --max_length 4096 \
     --sft_type full \
 ```
 
@@ -221,7 +231,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 swift sft \
 ```shell
 CUDA_VISIBLE_DEVICES=0 swift infer \
     --ckpt_dir output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 ```
 
 **merge-lora**并推理:
@@ -232,10 +243,12 @@ CUDA_VISIBLE_DEVICES=0 swift export \
 
 CUDA_VISIBLE_DEVICES=0 swift infer \
     --ckpt_dir "output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx-merged" \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 
 # device map
 CUDA_VISIBLE_DEVICES=0,1 swift infer \
     --ckpt_dir "output/internvl-chat-v1_5/vx-xxx/checkpoint-xxx-merged" \
-    --load_dataset_config true
+    --load_dataset_config true \
+    --max_length 4096
 ```

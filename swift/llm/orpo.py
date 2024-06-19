@@ -10,8 +10,8 @@ from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.utils import is_torch_npu_available
 
 from swift.trainers.orpo_trainers import ORPOTrainer
-from swift.utils import (check_json_format, get_dist_setting, get_logger, get_main, get_model_info, is_ddp_plus_mp,
-                         is_dist, is_master, plot_images, seed_everything, show_layers)
+from swift.utils import (append_to_jsonl, check_json_format, get_dist_setting, get_logger, get_main, get_model_info,
+                         is_ddp_plus_mp, is_dist, is_local_master, is_master, plot_images, seed_everything, show_layers)
 from .tuner import prepare_model
 from .utils import (ORPOArguments, Template, get_dataset, get_model_tokenizer, get_template, get_time_info,
                     set_generation_config)
@@ -83,6 +83,9 @@ def llm_orpo(args: ORPOArguments) -> str:
     }
     if args.use_flash_attn is not None:
         kwargs['use_flash_attn'] = args.use_flash_attn
+    if args.rope_scaling:
+        kwargs['rope_scaling'] = args.rope_scaling
+        kwargs['max_length'] = args.max_length
     model, tokenizer = get_model_tokenizer(
         args.model_type,
         args.torch_dtype,
@@ -144,6 +147,7 @@ def llm_orpo(args: ORPOArguments) -> str:
 
     if val_dataset is None:
         training_args.evaluation_strategy = IntervalStrategy.NO
+        training_args.eval_strategy = IntervalStrategy.NO
         training_args.do_eval = False
     logger.info(f'train_dataset: {train_dataset}')
     logger.info(f'val_dataset: {val_dataset}')
@@ -227,9 +231,9 @@ You can also use the --model_type parameter to specify the  template.')
         'model_info': model_info,
         'dataset_info': trainer.dataset_info,
     }
-    jsonl_path = os.path.join(args.output_dir, 'logging.jsonl')
-    with open(jsonl_path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps(run_info) + '\n')
+    if is_local_master():
+        jsonl_path = os.path.join(args.output_dir, 'logging.jsonl')
+        append_to_jsonl(jsonl_path, run_info)
     return run_info
 
 
