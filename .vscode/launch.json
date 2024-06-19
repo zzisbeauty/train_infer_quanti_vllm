@@ -1,0 +1,60 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python swift faster 4 train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/home/train_infer_quanti_vllm/swift/cli/main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "sft",
+                "--model_type","chatglm3-6b-32k",
+                "--model_id_or_path","/home/train_infer_quanti_vllm/untrackfiles/model-chatglm3-6b-32k-base",
+                "--sft_type", "lora",
+                "--tuner_backend", "peft",
+                
+                // 默认参数
+                // "--template_type", "AUTO",
+                // "--dtype","AUTO",
+                // "--train_dataset_sample","-1",
+                
+                // 数据处理默认参数
+                // "truncation_strategy","delete",
+                "--max_length","-1",  // "--max_length","20000",
+                "--check_dataset_strategy","warning",
+                // 注册数据集
+                "--dataset", "/home/train_infer_quanti_vllm/untrackfiles/datasets/std-data/100piece-chatglm-demo-data.jsonl",
+
+                // 模型训练与输出设置
+                "--num_train_epochs","5",
+                "--output_dir","/home/train_infer_quanti_vllm/untrackfiles/output-demo-model-glm3-32k-100intents",
+                
+
+
+                // lora 参数
+                "--lora_rank","8",
+                "--lora_alpha","32",
+                "--lora_dropout_p","0.05",
+                "--lora_target_modules","ALL",
+                "--gradient_checkpointing","true",
+                "--batch_size","1",
+                "--weight_decay","0.1",
+                "--learning_rate","1e-4",
+                "--gradient_accumulation_steps","16",
+                "--max_grad_norm","0.5",
+                "--warmup_ratio","0.03",
+                "--eval_steps","100",
+                "--save_steps","100",
+                "--save_total_limit","2",
+                "--logging_steps","10",
+            ],
+            "env":{
+                "PYTHONPATH": "${workspaceRoot}:/home/train_infer_quanti_vllm/swift"
+            }
+        }
+    ]
+}
