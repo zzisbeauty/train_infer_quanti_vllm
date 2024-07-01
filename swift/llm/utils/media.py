@@ -1,11 +1,13 @@
 import os
 import shutil
-import time
-from typing import List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import numpy as np
 
 from swift.hub.utils.utils import get_cache_dir
+from swift.utils import get_logger
+
+logger = get_logger()
 
 
 class MediaTag:
@@ -25,7 +27,7 @@ class MediaTag:
                 ('<bbox>', '<ref-object>'),
                 ('The object at position <bbox>', '<ref-object>'),
                 ('This <bbox> is', '<ref-object>'),
-                ('What is the thing at <bbox>', '<ref-object>'),
+                ('What is the object at <bbox>', '<ref-object>'),
                 ('Describe <bbox>', '<ref-object>'),
                 ('<bbox> is', '<ref-object>'),
                 ('The bounding box coordinate <bbox> contains', '<ref-object>'),
@@ -63,14 +65,13 @@ class MediaTag:
         self.task_type = task_type
         self.media_tag = media_tag or '<unused_tag>'
 
-    def __call__(self, d: dict, medias: Union[tuple, list], objects: List = None):
+    def __call__(self, d: Dict[str, Any], medias: Union[tuple, list]) -> None:
         """Format the query/response/history with medias
 
         Args:
             d: A dict contains history/query/response
             medias: A list of medias(one round, multiple medias),
                     a single media(one round, one media), or a tuple of media list(multiple rounds)
-            objects: A list of object-bbox pairs(one round), or a tuple of object-bbox lists(multiple rounds)
         """
         if not self.media_type:
             return
@@ -84,7 +85,8 @@ class MediaTag:
             pass
         elif self.task_type in ('ref_grounding', 'grounding_caption'):
             lang = np.random.choice(['en', 'zh'], p=[0.8, 0.2])
-            query, response = np.random.choice(self.task_prompts[self.task_type][lang])
+            prompts = self.task_prompts[self.task_type][lang]
+            query, response = prompts[np.random.choice(range(len(prompts)))]
         elif self.task_type == 'ocr':
             raise NotImplementedError
         else:
@@ -102,8 +104,7 @@ class MediaTag:
         if 'history' in d:
             d['history'] = history
         d['query'] = query
-        if 'response' in d:
-            d['response'] = response
+        d['response'] = response
 
 
 class MediaCache:
@@ -139,9 +140,18 @@ class MediaCache:
         final_folder = os.path.join(MediaCache.cache_dir, media_name)
         if os.path.exists(final_folder):
             return final_folder
+
+        logger.info('# #################Resource downloading#################')
+        logger.info('Downloading necessary resources...')
+        logger.info(f'Resource package: {media_type}')
+        logger.info(f'Extracting to local dir: {final_folder}')
+        logger.info('If the downloading fails or lasts a long time, '
+                    'you can manually download the resources and extracting to the local dir.')
+        logger.info('Now begin.')
         local_dirs = DownloadManager(download_config=DownloadConfig(
             cache_dir=MediaCache.cache_dir)).download_and_extract(media_type)
         shutil.move(str(local_dirs), final_folder)
+        logger.info('# #################Resource downloading finished#################')
         return final_folder
 
     @staticmethod

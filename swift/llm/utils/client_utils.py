@@ -33,7 +33,7 @@ def _parse_stream_data(data: bytes) -> Optional[str]:
     data = data.strip()
     if len(data) == 0:
         return
-    assert data.startswith('data:')
+    assert data.startswith('data:'), f'data: {data}'
     return data[5:].strip()
 
 
@@ -260,8 +260,8 @@ async def inference_client_async(
     host: str = '127.0.0.1',
     port: str = '8000',
     **kwargs
-) -> Union[ChatCompletionResponse, CompletionResponse, Iterator[ChatCompletionStreamResponse],
-           Iterator[CompletionStreamResponse]]:
+) -> Union[ChatCompletionResponse, CompletionResponse, AsyncIterator[ChatCompletionStreamResponse],
+           AsyncIterator[CompletionStreamResponse]]:
     if request_config is None:
         request_config = XRequestConfig()
     url, data, is_chat_request = _pre_inference_client(

@@ -1,8 +1,8 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 import os
+from typing import Any, Dict
 
 import json
-import numpy as np
 import torch
 from modelscope import BitsAndBytesConfig, GenerationConfig
 from transformers import IntervalStrategy
@@ -19,7 +19,7 @@ from .utils import (TEMPLATE_MAPPING, RLHFArguments, Template, get_dataset, get_
 logger = get_logger()
 
 
-def llm_rlhf(args: RLHFArguments) -> str:
+def llm_rlhf(args: RLHFArguments) -> Dict[str, Any]:
     logger.info(f'args: {args}')
     seed_everything(args.seed)
     training_args = args.training_args
@@ -49,6 +49,8 @@ def llm_rlhf(args: RLHFArguments) -> str:
         model_kwargs = {'low_cpu_mem_usage': True}
         if is_dist() and not is_ddp_plus_mp():
             model_kwargs['device_map'] = {'': local_rank}
+        elif torch.cuda.device_count() == 1:
+            model_kwargs['device_map'] = 'cuda:0'
         else:
             model_kwargs['device_map'] = 'auto'
 
@@ -92,12 +94,6 @@ def llm_rlhf(args: RLHFArguments) -> str:
         kwargs['use_flash_attn'] = args.use_flash_attn
     if args.local_repo_path:
         kwargs['local_repo_path'] = args.local_repo_path
-    if args.quant_method == 'awq':
-        kwargs['is_awq'] = True
-    elif args.quant_method == 'aqlm':
-        kwargs['is_aqlm'] = True
-    elif args.quant_method == 'gptq':
-        kwargs['is_gptq'] = True
 
     if args.rope_scaling:
         kwargs['rope_scaling'] = args.rope_scaling
@@ -109,6 +105,7 @@ def llm_rlhf(args: RLHFArguments) -> str:
         model_kwargs,
         model_id_or_path=args.model_id_or_path,
         revision=args.model_revision,
+        quant_method=args.quant_method,
         is_training=True,
         **kwargs)
     logger.info(f'model_config: {model.config}')
@@ -153,6 +150,7 @@ def llm_rlhf(args: RLHFArguments) -> str:
                 model_kwargs,
                 model_id_or_path=args.ref_model_id_or_path,
                 revision=args.model_revision,
+                quant_method=args.quant_method,
                 **kwargs)
     else:
         ref_model = None
@@ -230,8 +228,11 @@ You can also use the --model_type parameter to specify the  template.')
         for args_obj, fname in zip([args, training_args], ['sft_args.json', 'training_args.json']):
             fpath = os.path.join(args.output_dir, fname)
             logger.info(f'The {args_obj.__class__.__name__} will be saved in: {fpath}')
+            args_dict = args_obj.__dict__
+            args_dict.pop('hub_token', None)
+            args_dict.pop('push_to_hub_token', None)
             with open(fpath, 'w', encoding='utf-8') as f:
-                json.dump(check_json_format(args_obj.__dict__), f, ensure_ascii=False, indent=2)
+                json.dump(check_json_format(args_dict), f, ensure_ascii=False, indent=2)
     logging_path = os.path.join(args.output_dir, 'logging.jsonl')
     logger.info(f'The logging file will be saved in: {logging_path}')
     trainer.train(training_args.resume_from_checkpoint)

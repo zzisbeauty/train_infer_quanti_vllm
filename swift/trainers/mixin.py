@@ -6,11 +6,10 @@ import shutil
 import time
 from pathlib import Path
 from types import MethodType
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import json
 import numpy as np
-import peft
 import safetensors
 import torch
 import transformers
@@ -237,6 +236,7 @@ class SwiftMixin:
         use_swift = isinstance(model, SwiftModel)
         if is_quantized and use_swift:
             model._hf_peft_config_loaded = True
+        self.is_encoder_decoder = kwargs.pop('is_encoder_decoder', False)
         # mro
         super().__init__(
             model=model,
@@ -404,7 +404,7 @@ class SwiftMixin:
         torch.save(self.args, os.path.join(output_dir, 'training_args.bin'))
         # additional files
         if sft_args is not None and sft_args.sft_type == 'full':
-            additional_files = getattr(self.args, 'additional_saved_files', []) + ['preprocessor_config.json']
+            additional_files = getattr(self.args, 'additional_saved_files', None) or [] + ['preprocessor_config.json']
             if model_dir is not None:
                 for file in additional_files:
                     src_path = os.path.join(model_dir, file)
@@ -513,7 +513,7 @@ class SwiftMixin:
             # Control the behavior of "resume_from_checkpoint" by swift.
             self._resume_from_checkpoint = resume_from_checkpoint
             resume_from_checkpoint = None
-        if (self._resume_from_checkpoint is not None and not is_sagemaker_mp_enabled() and not self.is_fsdp_enabled):
+        if self._resume_from_checkpoint is not None and not is_sagemaker_mp_enabled() and not self.is_fsdp_enabled:
             self._load_from_checkpoint(self._resume_from_checkpoint)
         res = super().train(resume_from_checkpoint, *args, **kwargs)
         self._resume_from_checkpoint = None
