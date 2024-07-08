@@ -4,6 +4,9 @@ from typing import Type
 import gradio as gr
 
 from swift.ui.base import BaseUI
+from swift.utils import get_logger
+
+logger = get_logger()
 
 
 class Eval(BaseUI):
@@ -110,10 +113,27 @@ class Eval(BaseUI):
 
     @classmethod
     def do_build_ui(cls, base_tab: Type['BaseUI']):
+        try:
+            from llmuses.backend.opencompass import OpenCompassBackendManager
+            eval_dataset_list = OpenCompassBackendManager.list_datasets()
+        except ImportError:
+            eval_dataset_list = [
+                'AX_b', 'winogrande', 'mmlu', 'afqmc', 'COPA', 'commonsenseqa', 'CMRC', 'lcsts', 'nq', 'ocnli_fc',
+                'math', 'mbpp', 'DRCD', 'TheoremQA', 'CB', 'ReCoRD', 'lambada', 'tnews', 'flores', 'humaneval', 'AX_g',
+                'ceval', 'bbh', 'BoolQ', 'MultiRC', 'piqa', 'csl', 'ARC_c', 'agieval', 'cmnli', 'strategyqa', 'gsm8k',
+                'summedits', 'eprstmt', 'WiC', 'cluewsc', 'Xsum', 'ocnli', 'triviaqa', 'hellaswag', 'race', 'bustm',
+                'RTE', 'C3', 'GaokaoBench', 'storycloze', 'ARC_e', 'siqa', 'obqa', 'WSC', 'chid'
+            ]
+
         with gr.Row():
             gr.Textbox(elem_id='name', scale=20)
             gr.Dropdown(
-                elem_id='eval_dataset', is_list=True, choices=['ceval', 'gsm8k', 'arc'], multiselect=True, scale=20)
+                elem_id='eval_dataset',
+                is_list=True,
+                choices=eval_dataset_list,
+                multiselect=True,
+                allow_custom_value=True,
+                scale=20)
             gr.Textbox(elem_id='eval_few_shot', scale=20)
             gr.Textbox(elem_id='eval_limit', scale=20)
             gr.Checkbox(elem_id='eval_use_cache', scale=20)

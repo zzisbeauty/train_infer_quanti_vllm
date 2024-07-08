@@ -6,6 +6,7 @@ from .client_utils import (convert_to_base64, decode_base64, get_model_list_clie
 from .dataset import (DATASET_MAPPING, DatasetName, HfDataset, get_dataset, get_dataset_from_repo,
                       load_dataset_from_local, load_ms_dataset, register_dataset, register_dataset_info,
                       register_local_dataset, sample_dataset)
+from .media import MediaCache, MediaTag
 from .model import (MODEL_MAPPING, GetModelTokenizerFunction, LoRATM, ModelType, get_additional_saved_files,
                     get_default_lora_target_modules, get_default_template_type, get_model_tokenizer,
                     get_model_tokenizer_from_repo, get_model_tokenizer_with_flash_attn, register_model)
@@ -28,7 +29,7 @@ from .utils import (LazyLLMDataset, LLMDataset, dataset_map, download_dataset, f
 try:
     if is_vllm_available():
         from .vllm_utils import (VllmGenerationConfig, get_vllm_engine, inference_stream_vllm, inference_vllm,
-                                 prepare_vllm_engine_template)
+                                 prepare_vllm_engine_template, vllm_context)
         try:
             from .vllm_utils import LoRARequest
         except ImportError:

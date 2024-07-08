@@ -3,6 +3,7 @@
 ### 📚 Tutorial
 
 1. [MLLM Deployment Documentation](mutlimodal-deployment.md)
+2. [vLLM Inference Acceleration](vllm-inference-acceleration.md)
 
 ### Multi-Modal Best Practice
 
@@ -15,7 +16,7 @@ A single round of dialogue can contain multiple images (or no images):
 
 
 A single round of dialogue can only contain one image:
-1. [Llava Best Practice](llava-best-practice.md)
+1. [Llava Best Practice](llava-best-practice.md), [LLava Video Best Practice](llava-video-best-practice.md)
 2. [Yi-VL Best Practice.md](yi-vl-best-practice.md)
 3. [Florence Best Practice.md](florence-best-pratice.md)
 

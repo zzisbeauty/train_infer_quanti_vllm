@@ -15,6 +15,7 @@ import torch.utils.checkpoint
 import transformers
 from modelscope import (AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
                         GenerationConfig, GPTQConfig, snapshot_download)
+from modelscope.hub.utils.utils import get_cache_dir
 from packaging import version
 from torch import Tensor
 from torch import dtype as Dtype
@@ -25,14 +26,13 @@ from transformers.utils import strtobool
 from transformers.utils.versions import require_version
 
 from swift import get_logger
-from swift.hub.utils.utils import get_cache_dir
 from swift.utils import get_dist_setting, safe_ddp_context, subprocess_run, use_torchacc
 from .template import TemplateType
 from .utils import get_max_model_len, is_unsloth_available
 
 logger = get_logger()
 
-# Model Home: 'https://modelscope.cn/models/{model_id_or_path}/summary'
+# Model Home: 'https://modelscope.cn/models/{model_id_or_path}'
 MODEL_MAPPING: Dict[str, Dict[str, Any]] = {}
 
 
@@ -151,6 +151,7 @@ class ModelType:
     glm4_9b = 'glm4-9b'
     glm4_9b_chat = 'glm4-9b-chat'
     glm4_9b_chat_1m = 'glm4-9b-chat-1m'
+    codegeex4_9b_chat = 'codegeex4-9b-chat'
     # llama2
     llama2_7b = 'llama2-7b'
     llama2_7b_chat = 'llama2-7b-chat'
@@ -189,12 +190,20 @@ class ModelType:
     atom_7b = 'atom-7b'
     atom_7b_chat = 'atom-7b-chat'
     # llava
-    llava1_5_7b_chat = 'llava1_5-7b-chat'
+    llava1_5_7b_instruct = 'llava1_5-7b-instruct'
+    llava1_5_13b_instruct = 'llava1_5-13b-instruct'
     llava1_6_mistral_7b_instruct = 'llava1_6-mistral-7b-instruct'
+    llava1_6_vicuna_7b_instruct = 'llava1_6-vicuna-7b-instruct'
+    llava1_6_vicuna_13b_instruct = 'llava1_6-vicuna-13b-instruct'
     llava1_6_yi_34b_instruct = 'llava1_6-yi-34b-instruct'
     llama3_llava_next_8b = 'llama3-llava-next-8b'
     llava_next_72b = 'llava-next-72b'
     llava_next_110b = 'llava-next-110b'
+    # llava_next_video
+    llava_next_video_7b_instruct = 'llava-next-video-7b-instruct'
+    llava_next_video_7b_32k_instruct = 'llava-next-video-7b-32k-instruct'
+    llava_next_video_7b_dpo_instruct = 'llava-next-video-7b-dpo-instruct'
+    llava_next_video_34b_instruct = 'llava-next-video-34b-instruct'
     # yi
     yi_6b = 'yi-6b'
     yi_6b_200k = 'yi-6b-200k'
@@ -246,6 +255,10 @@ class ModelType:
     internlm2_20b = 'internlm2-20b'
     internlm2_20b_sft_chat = 'internlm2-20b-sft-chat'
     internlm2_20b_chat = 'internlm2-20b-chat'
+    # internlm2.5
+    internlm2_5_7b = 'internlm2_5-7b'
+    internlm2_5_7b_chat = 'internlm2_5-7b-chat'
+    internlm2_5_7b_chat_1m = 'internlm2_5-7b-chat-1m'
     # internlm2-math
     internlm2_math_7b = 'internlm2-math-7b'
     internlm2_math_7b_chat = 'internlm2-math-7b-chat'
@@ -253,11 +266,16 @@ class ModelType:
     internlm2_math_20b_chat = 'internlm2-math-20b-chat'
     # internlm-xcomposer2
     internlm_xcomposer2_7b_chat = 'internlm-xcomposer2-7b-chat'
+    internlm_xcomposer2_5_7b_chat = 'internlm-xcomposer2_5-7b-chat'
     # internvl
     internvl_chat_v1_5 = 'internvl-chat-v1_5'
     internvl_chat_v1_5_int8 = 'internvl-chat-v1_5-int8'
     mini_internvl_chat_2b_v1_5 = 'mini-internvl-chat-2b-v1_5'
     mini_internvl_chat_4b_v1_5 = 'mini-internvl-chat-4b-v1_5'
+    internvl2_2b = 'internvl2-2b'
+    internvl2_4b = 'internvl2-4b'
+    internvl2_8b = 'internvl2-8b'
+    internvl2_26b = 'internvl2-26b'
     # deepseek
     deepseek_7b = 'deepseek-7b'
     deepseek_7b_chat = 'deepseek-7b-chat'
@@ -326,6 +344,7 @@ class ModelType:
     mistral_7b_v2 = 'mistral-7b-v2'
     mistral_7b_instruct = 'mistral-7b-instruct'
     mistral_7b_instruct_v2 = 'mistral-7b-instruct-v2'
+    mistral_7b_instruct_v3 = 'mistral-7b-instruct-v3'
     mixtral_moe_7b = 'mixtral-moe-7b'
     mixtral_moe_7b_instruct = 'mixtral-moe-7b-instruct'
     mixtral_moe_7b_aqlm_2bit_1x16 = 'mixtral-moe-7b-aqlm-2bit-1x16'  # aqlm
@@ -925,9 +944,6 @@ def get_model_tokenizer_from_repo(model_dir: str,
             with context:
                 model = automodel_class.from_pretrained(
                     model_dir, config=model_config, torch_dtype=torch_dtype, trust_remote_code=True, **model_kwargs)
-        if is_training:
-            model.train()
-            model.requires_grad_(True)
         model.is_gptq = is_gptq
         model.is_awq = is_awq
         model.is_aqlm = is_aqlm
@@ -942,6 +958,7 @@ def get_model_tokenizer_from_repo(model_dir: str,
     LoRATM.cogvlm,
     TemplateType.cogvlm,
     support_gradient_checkpointing=False,
+    requires=['transformers<4.42'],
     placeholder_tokens=['<|reserved_special_token_0|>'],
     tags=['multi-modal', 'vision'],
     hf_model_id='THUDM/cogvlm2-llama3-chat-19B')
@@ -951,6 +968,7 @@ def get_model_tokenizer_from_repo(model_dir: str,
     LoRATM.cogvlm,
     TemplateType.cogvlm,
     support_gradient_checkpointing=False,
+    requires=['transformers<4.42'],
     placeholder_tokens=['<|reserved_special_token_0|>'],
     tags=['multi-modal', 'vision'],
     hf_model_id='THUDM/cogvlm2-llama3-chinese-chat-19B')
@@ -1098,6 +1116,7 @@ def get_model_tokenizer_mamba(model_dir: str,
     LoRATM.cogvlm,
     TemplateType.cogvlm,
     support_gradient_checkpointing=False,
+    requires=['transformers<4.42'],
     tags=['multi-modal', 'vision'],
     hf_model_id='THUDM/cogvlm-chat-hf')
 @register_model(
@@ -1262,6 +1281,14 @@ def _clone_hook(module, input, output):
     'LLM-Research/Phi-3-vision-128k-instruct',
     LoRATM.phi3,
     TemplateType.phi3_vl,
+    # https://github.com/vllm-project/vllm/blob/main/examples/phi3v_example.py
+    support_vllm=True,
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32044,
+        'image_input_shape': '1,3,1008,1344',
+        'image_feature_size': 1921,
+    },
     support_flash_attn=True,
     requires=['transformers>=4.36'],
     tags=['multi-modal', 'vision'],
@@ -1411,37 +1438,6 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
 
 
 @register_model(
-    ModelType.glm4_9b,
-    'ZhipuAI/glm-4-9b',
-    LoRATM.chatglm,
-    TemplateType.chatglm_generation,
-    support_vllm=True,
-    hf_model_id='THUDM/glm-4-9b')
-@register_model(
-    ModelType.glm4_9b_chat,
-    'ZhipuAI/glm-4-9b-chat',
-    LoRATM.chatglm,
-    TemplateType.chatglm3,
-    support_vllm=True,
-    function_kwargs={'kv_cache_patch': True},
-    hf_model_id='THUDM/glm-4-9b-chat')
-@register_model(
-    ModelType.glm4_9b_chat_1m,
-    'ZhipuAI/glm-4-9b-chat-1m',
-    LoRATM.chatglm,
-    TemplateType.chatglm3,
-    support_vllm=True,
-    function_kwargs={'kv_cache_patch': True},
-    hf_model_id='THUDM/glm-4-9b-chat-1m')
-@register_model(
-    ModelType.glm4v_9b_chat,
-    'ZhipuAI/glm-4v-9b',
-    LoRATM.glm4v,
-    TemplateType.glm4v,
-    eos_token='<|endoftext|>',
-    tags=['multi-modal', 'vision'],
-    hf_model_id='THUDM/glm-4v-9b')
-@register_model(
     ModelType.codefuse_codegeex2_6b_chat,
     'codefuse-ai/CodeFuse-CodeGeeX2-6B',
     LoRATM.chatglm,
@@ -1456,6 +1452,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm3,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm3-6b-32k')
 @register_model(
     ModelType.chatglm3_6b_128k,
@@ -1463,6 +1460,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm3,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm3-6b-128k')
 @register_model(
     ModelType.chatglm3_6b,
@@ -1470,6 +1468,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm3,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm3-6b')
 @register_model(
     ModelType.chatglm3_6b_base,
@@ -1477,6 +1476,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm_generation,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm3-6b-base')
 @register_model(
     ModelType.chatglm2_6b_32k,
@@ -1484,6 +1484,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm2,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm2-6b-32k')
 @register_model(
     ModelType.chatglm2_6b,
@@ -1491,6 +1492,7 @@ def remove_property(tokenizer_cls: Type[PreTrainedTokenizerBase], tokenizer_conf
     LoRATM.chatglm,
     TemplateType.chatglm2,
     support_vllm=True,
+    requires=['transformers<4.42'],
     hf_model_id='THUDM/chatglm2-6b')
 @register_model(
     ModelType.codegeex2_6b,
@@ -1506,7 +1508,6 @@ def get_model_tokenizer_chatglm(model_dir: str,
                                 model_kwargs: Dict[str, Any],
                                 load_model: bool = True,
                                 **kwargs):
-    kv_cache_patch = kwargs.pop('kv_cache_patch', False)
     if model_kwargs.get('quantization_config') is not None:
         model_kwargs['quantization_config'].llm_int8_skip_modules = ['output_layer']
     # fix transformers>=4.34 bug
@@ -1518,7 +1519,6 @@ def get_model_tokenizer_chatglm(model_dir: str,
         remove_property(tokenizer_cls, tokenizer_config)
         kwargs['tokenizer'] = tokenizer_cls.from_pretrained(model_dir, trust_remote_code=True)
     model, tokenizer = get_model_tokenizer_from_repo(model_dir, torch_dtype, model_kwargs, load_model, **kwargs)
-    tokenizer.init_kwargs['image_size'] = 1120
     if model is not None:
         from torch.nn import CrossEntropyLoss
         __old_forward = CrossEntropyLoss.forward
@@ -1529,17 +1529,90 @@ def get_model_tokenizer_chatglm(model_dir: str,
 
         CrossEntropyLoss.forward = cross_entropy_forward
 
-        if kv_cache_patch:
-            device = next(model.parameters()).device.type
+    return model, tokenizer
 
-            def _output_device_map_hook(module, input, output):
-                kv_cache = output[1]
-                if kv_cache is not None and isinstance(kv_cache, torch.Tensor):
-                    kv_cache = kv_cache.to(f'{device}:0')
-                return output[0], kv_cache
 
-            for layer in model.transformer.encoder.layers:
-                layer.register_forward_hook(_output_device_map_hook)
+@register_model(
+    ModelType.codegeex4_9b_chat,
+    'ZhipuAI/codegeex4-all-9b',
+    LoRATM.chatglm,
+    TemplateType.codegeex4,
+    support_vllm=True,
+    support_flash_attn=True,
+    tags=['coding'],
+    requires=['transformers<4.42'],
+    hf_model_id='THUDM/codegeex4-all-9b')
+@register_model(
+    ModelType.glm4_9b,
+    'ZhipuAI/glm-4-9b',
+    LoRATM.chatglm,
+    TemplateType.chatglm_generation,
+    support_vllm=True,
+    support_flash_attn=True,
+    requires=['transformers<4.42'],
+    hf_model_id='THUDM/glm-4-9b')
+@register_model(
+    ModelType.glm4_9b_chat,
+    'ZhipuAI/glm-4-9b-chat',
+    LoRATM.chatglm,
+    TemplateType.chatglm3,
+    support_flash_attn=True,
+    support_vllm=True,
+    requires=['transformers<4.42'],
+    hf_model_id='THUDM/glm-4-9b-chat')
+@register_model(
+    ModelType.glm4_9b_chat_1m,
+    'ZhipuAI/glm-4-9b-chat-1m',
+    LoRATM.chatglm,
+    TemplateType.chatglm3,
+    support_flash_attn=True,
+    support_vllm=True,
+    requires=['transformers<4.42'],
+    hf_model_id='THUDM/glm-4-9b-chat-1m')
+def get_model_tokenizer_glm4(model_dir: str,
+                             torch_dtype: Dtype,
+                             model_kwargs: Dict[str, Any],
+                             load_model: bool = True,
+                             **kwargs):
+    model_config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
+    use_flash_attn = kwargs.pop('use_flash_attn', False)
+    if use_flash_attn:
+        model_config._attn_implementation = 'flash_attention_2'
+    else:
+        model_config._attn_implementation = 'eager'
+    return get_model_tokenizer_chatglm(
+        model_dir, torch_dtype, model_kwargs, load_model, model_config=model_config, **kwargs)
+
+
+@register_model(
+    ModelType.glm4v_9b_chat,
+    'ZhipuAI/glm-4v-9b',
+    LoRATM.glm4v,
+    TemplateType.glm4v,
+    eos_token='<|endoftext|>',
+    requires=['transformers<4.42'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='THUDM/glm-4v-9b')
+def get_model_tokenizer_glm4v(model_dir: str,
+                              torch_dtype: Dtype,
+                              model_kwargs: Dict[str, Any],
+                              load_model: bool = True,
+                              **kwargs):
+    model, tokenizer = get_model_tokenizer_glm4(model_dir, torch_dtype, model_kwargs, load_model, **kwargs)
+    # fix device_map 4
+    n_gpu = torch.cuda.device_count()
+    local_world_size = get_dist_setting()[3]
+
+    def _output_device_map_hook(module, input, output):
+        return output.to(input[0].device)
+
+    if n_gpu // local_world_size >= 4:
+        for layer in model.transformer.vision.transformer.layers:
+            layer.mlp.register_forward_hook(_output_device_map_hook)
+            layer.post_attention_layernorm.register_forward_hook(_output_device_map_hook)
+        device = next(model.transformer.vision.linear_proj.parameters()).device
+        model.transformer.vision.boi.data = model.transformer.vision.boi.to(device)
+        model.transformer.vision.eoi.data = model.transformer.vision.eoi.to(device)
     return model, tokenizer
 
 
@@ -2337,6 +2410,16 @@ def get_model_tokenizer_chatglm(model_dir: str,
     support_vllm=True,
     hf_model_id='mistralai/Mistral-7B-Instruct-v0.2')
 @register_model(
+    ModelType.mistral_7b_instruct_v3,
+    'LLM-Research/Mistral-7B-Instruct-v0.3',
+    LoRATM.llama,
+    TemplateType.llama,
+    ignore_file_pattern=['consolidated.safetensors'],
+    requires=['transformers>=4.34'],
+    support_flash_attn=True,
+    support_vllm=True,
+    hf_model_id='mistralai/Mistral-7B-Instruct-v0.3')
+@register_model(
     ModelType.mistral_7b,
     'AI-ModelScope/Mistral-7B-v0.1',
     LoRATM.llama,
@@ -2592,6 +2675,7 @@ def get_model_tokenizer_florence(model_dir: str,
     else:
         model_config.text_config._flash_attn_2_enabled = use_flash_attn
         model_config._flash_attn_2_enabled = use_flash_attn
+    model_config.vision_config.model_type = 'davit'
     model, tokenizer = get_model_tokenizer_from_repo(
         model_dir,
         torch_dtype,
@@ -3227,11 +3311,40 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
 
 
 @register_model(
+    ModelType.internlm2_5_7b,
+    'Shanghai_AI_Laboratory/internlm2_5-7b',
+    LoRATM.internlm2,
+    TemplateType.default_generation,
+    requires=['transformers>=4.38'],
+    support_flash_attn=True,
+    support_vllm=True,
+    hf_model_id='internlm/internlm2_5-7b')
+@register_model(
+    ModelType.internlm2_5_7b_chat,
+    'Shanghai_AI_Laboratory/internlm2_5-7b-chat',
+    LoRATM.internlm2,
+    TemplateType.internlm2,
+    eos_token='<|im_end|>',
+    requires=['transformers>=4.38'],
+    support_flash_attn=True,
+    support_vllm=True,
+    hf_model_id='internlm/internlm2_5-7b-chat')
+@register_model(
+    ModelType.internlm2_5_7b_chat_1m,
+    'Shanghai_AI_Laboratory/internlm2_5-7b-chat-1m',
+    LoRATM.internlm2,
+    TemplateType.internlm2,
+    eos_token='<|im_end|>',
+    requires=['transformers>=4.38'],
+    support_flash_attn=True,
+    support_vllm=True,
+    hf_model_id='internlm/internlm2_5-7b-chat-1m')
+@register_model(
     ModelType.internlm2_1_8b,
     'Shanghai_AI_Laboratory/internlm2-1_8b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-1_8b')
@@ -3241,7 +3354,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-1_8b-sft')
@@ -3251,7 +3364,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-1_8b')
@@ -3260,7 +3373,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-math-base-7b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     tags=['math'],
@@ -3270,7 +3383,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-math-base-20b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     tags=['math'],
@@ -3281,7 +3394,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     tags=['math'],
@@ -3292,7 +3405,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     tags=['math'],
@@ -3303,7 +3416,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-7b-sft')
@@ -3313,7 +3426,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-7b')
@@ -3323,7 +3436,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-20b-sft')
@@ -3333,7 +3446,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     LoRATM.internlm2,
     TemplateType.internlm2,
     eos_token='<|im_end|>',
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-chat-20b')
@@ -3342,7 +3455,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-7b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-7b')
@@ -3351,7 +3464,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-base-7b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-base-7b')
@@ -3360,7 +3473,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-20b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-20b')
@@ -3369,7 +3482,7 @@ def get_model_tokenizer_qwen2_intx(model_dir: str,
     'Shanghai_AI_Laboratory/internlm2-base-20b',
     LoRATM.internlm2,
     TemplateType.default_generation,
-    requires=['transformers>=4.35'],
+    requires=['transformers>=4.38'],
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='internlm/internlm2-base-20b')
@@ -3532,6 +3645,46 @@ def fix_internvl_inplace_bug(model) -> None:
     placeholder_tokens=['<IMG_CONTEXT>'],
     tags=['multi-modal', 'vision'],
     hf_model_id='OpenGVLab/Mini-InternVL-Chat-4B-V1-5')
+@register_model(
+    ModelType.internvl2_2b,
+    'OpenGVLab/InternVL2-2B',
+    LoRATM.internlm2,
+    TemplateType.internvl2,
+    requires=['transformers>=4.35', 'timm'],
+    support_flash_attn=True,
+    placeholder_tokens=['<IMG_CONTEXT>'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='OpenGVLab/InternVL2-2B')
+@register_model(
+    ModelType.internvl2_4b,
+    'OpenGVLab/InternVL2-4B',
+    LoRATM.internlm2,
+    TemplateType.internvl2,
+    requires=['transformers>=4.35', 'timm'],
+    support_flash_attn=True,
+    placeholder_tokens=['<IMG_CONTEXT>'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='OpenGVLab/InternVL2-4B')
+@register_model(
+    ModelType.internvl2_8b,
+    'OpenGVLab/InternVL2-8B',
+    LoRATM.internlm2,
+    TemplateType.internvl2,
+    requires=['transformers>=4.35', 'timm'],
+    support_flash_attn=True,
+    placeholder_tokens=['<IMG_CONTEXT>'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='OpenGVLab/InternVL2-8B')
+@register_model(
+    ModelType.internvl2_26b,
+    'OpenGVLab/InternVL2-26B',
+    LoRATM.internlm2,
+    TemplateType.internvl2,
+    requires=['transformers>=4.35', 'timm'],
+    support_flash_attn=True,
+    placeholder_tokens=['<IMG_CONTEXT>'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='OpenGVLab/InternVL2-26B')
 def get_model_tokenizer_internvl(model_dir: str,
                                  torch_dtype: Dtype,
                                  model_kwargs: Dict[str, Any],
@@ -3635,6 +3788,15 @@ def get_model_tokenizer_internvl(model_dir: str,
     return model, tokenizer
 
 
+@register_model(
+    ModelType.internlm_xcomposer2_5_7b_chat,
+    'Shanghai_AI_Laboratory/internlm-xcomposer2d5-7b',
+    LoRATM.internlm2,
+    TemplateType.internlm_xcomposer2_5,
+    eos_token='<|im_end|>',
+    support_flash_attn=True,
+    tags=['multi-modal', 'vision'],
+    hf_model_id='internlm/internlm-xcomposer2d5-7b')
 @register_model(
     ModelType.internlm_xcomposer2_7b_chat,
     'Shanghai_AI_Laboratory/internlm-xcomposer2-7b',
@@ -4897,45 +5059,184 @@ def _patch_llava(model):
     model.generate = _new_generate
 
 
-@register_model(
-    ModelType.llava1_5_7b_chat,
-    'huangjintao/llava-1.5-7b-hf',
-    LoRATM.llama,
-    TemplateType.llava1_5,
-    eos_token='</s>',
-    support_flash_attn=True,
-    requires=['transformers>=4.36'],
-    tags=['multi-modal', 'vision'],
-    hf_model_id='llava-hf/llava-1.5-7b-hf')
-def get_model_tokenizer_llava1_5(model_dir: str, *args, **kwargs):
-    from transformers import AutoProcessor, LlavaForConditionalGeneration
+def get_model_tokenizer_llava_hf(model_dir: str, *args, **kwargs):
+    from transformers import AutoProcessor
     processor = AutoProcessor.from_pretrained(model_dir)
-    model, tokenizer = get_model_tokenizer_with_flash_attn(
-        model_dir, *args, automodel_class=LlavaForConditionalGeneration, **kwargs)
+    model, tokenizer = get_model_tokenizer_with_flash_attn(model_dir, *args, **kwargs)
     tokenizer.processor = processor
     return model, tokenizer
 
 
 @register_model(
-    ModelType.llava1_6_yi_34b_instruct,
-    'AI-ModelScope/llava-v1.6-34b',
+    ModelType.llava1_5_13b_instruct,
+    'huangjintao/llava-1.5-13b-hf',
     LoRATM.llama,
-    TemplateType.llava_yi_instruct,
-    eos_token='<|im_end|>',
+    TemplateType.llava1_5,
+    eos_token='</s>',
+    support_vllm=True,
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32000,
+        'image_input_shape': '1,3,336,336',
+        'image_feature_size': 576,
+    },
     support_flash_attn=True,
-    function_kwargs={'llm_model_type': 'llama'},
+    requires=['transformers>=4.36'],
     tags=['multi-modal', 'vision'],
-    hf_model_id='liuhaotian/llava-v1.6-34b')
+    hf_model_id='llava-hf/llava-1.5-13b-hf')
+@register_model(
+    ModelType.llava1_5_7b_instruct,
+    'huangjintao/llava-1.5-7b-hf',
+    LoRATM.llama,
+    TemplateType.llava1_5,
+    eos_token='</s>',
+    support_vllm=True,
+    # https://github.com/vllm-project/vllm/blob/main/examples/llava_example.py
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32000,
+        'image_input_shape': '1,3,336,336',
+        'image_feature_size': 576,
+    },
+    support_flash_attn=True,
+    requires=['transformers>=4.36'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='llava-hf/llava-1.5-7b-hf')
+def get_model_tokenizer_llava_1_5(*args, **kwargs):
+    from transformers import LlavaForConditionalGeneration
+    kwargs['automodel_class'] = LlavaForConditionalGeneration
+    return get_model_tokenizer_llava_hf(*args, **kwargs)
+
+
+@register_model(
+    ModelType.llava1_6_vicuna_7b_instruct,
+    'huangjintao/llava-v1.6-vicuna-7b-hf',
+    LoRATM.llama,
+    TemplateType.llava_vicuna,
+    support_vllm=True,
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32000,
+        'image_input_shape': '1,3,336,336',
+        'image_feature_size': 1176,
+    },
+    support_flash_attn=True,
+    requires=['transformers>=4.39'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='llava-hf/llava-v1.6-vicuna-7b-hf')
+@register_model(
+    ModelType.llava1_6_vicuna_13b_instruct,
+    'huangjintao/llava-v1.6-vicuna-13b-hf',
+    LoRATM.llama,
+    TemplateType.llava_vicuna,
+    support_vllm=True,
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32000,
+        'image_input_shape': '1,3,336,336',
+        'image_feature_size': 1176,
+    },
+    support_flash_attn=True,
+    requires=['transformers>=4.39'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='llava-hf/llava-v1.6-vicuna-13b-hf')
 @register_model(
     ModelType.llava1_6_mistral_7b_instruct,
-    'AI-ModelScope/llava-v1.6-mistral-7b',
+    'huangjintao/llava-v1.6-mistral-7b-hf',
     LoRATM.llama,
-    TemplateType.llava_mistral_instruct,
-    requires=['transformers>=4.34'],
+    TemplateType.llava_mistral,
+    support_vllm=True,
+    # https://github.com/vllm-project/vllm/blob/main/examples/llava_next_example.py
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 32000,
+        'image_input_shape': '1,3,672,672',
+        'image_feature_size': 2928,
+    },
     support_flash_attn=True,
-    function_kwargs={'llm_model_type': 'mistral'},
+    requires=['transformers>=4.39'],
     tags=['multi-modal', 'vision'],
-    hf_model_id='liuhaotian/llava-v1.6-mistral-7b')
+    hf_model_id='llava-hf/llava-v1.6-mistral-7b-hf')
+def get_model_tokenizer_llava_next(*args, **kwargs):
+    from transformers import LlavaNextForConditionalGeneration
+    kwargs['automodel_class'] = LlavaNextForConditionalGeneration
+    return get_model_tokenizer_llava_hf(*args, **kwargs)
+
+
+@register_model(
+    ModelType.llava1_6_yi_34b_instruct,
+    'huangjintao/llava-v1.6-34b-hf',
+    LoRATM.llama,
+    TemplateType.llava_yi,
+    support_vllm=True,
+    vllm_config={
+        'image_input_type': 'pixel_values',
+        'image_token_id': 64003,
+        'image_input_shape': '1,3,336,336',
+        'image_feature_size': 1176,
+    },
+    support_flash_attn=True,
+    eos_token='<|im_end|>',
+    requires=['transformers>=4.39'],
+    tags=['multi-modal', 'vision'],
+    hf_model_id='llava-hf/llava-v1.6-34b-hf')
+def get_model_tokenizer_llava_next_yi(*args, **kwargs):
+    model, tokenizer = get_model_tokenizer_llava_next(*args, **kwargs)
+    if model is not None:
+        model.config.image_token_index = 64003
+    return model, tokenizer
+
+
+@register_model(
+    ModelType.llava_next_video_7b_dpo_instruct,
+    'huangjintao/LLaVA-NeXT-Video-7B-DPO-hf',
+    LoRATM.llama,
+    TemplateType.llava_next_video,
+    support_flash_attn=True,
+    requires=['transformers>=4.42', 'av'],
+    tags=['multi-modal', 'video'],
+    hf_model_id='llava-hf/LLaVA-NeXT-Video-7B-DPO-hf')
+@register_model(
+    ModelType.llava_next_video_7b_32k_instruct,
+    'huangjintao/LLaVA-NeXT-Video-7B-32K-hf',
+    LoRATM.llama,
+    TemplateType.llava_next_video,
+    support_flash_attn=True,
+    requires=['transformers>=4.42', 'av'],
+    tags=['multi-modal', 'video'],
+    hf_model_id='llava-hf/LLaVA-NeXT-Video-7B-32K-hf')
+@register_model(
+    ModelType.llava_next_video_7b_instruct,
+    'huangjintao/LLaVA-NeXT-Video-7B-hf',
+    LoRATM.llama,
+    TemplateType.llava_next_video,
+    support_flash_attn=True,
+    requires=['transformers>=4.42', 'av'],
+    tags=['multi-modal', 'video'],
+    hf_model_id='llava-hf/LLaVA-NeXT-Video-7B-hf')
+def get_model_tokenizer_llava_next_video(*args, **kwargs):
+    from transformers import LlavaNextVideoForConditionalGeneration
+    kwargs['automodel_class'] = LlavaNextVideoForConditionalGeneration
+    return get_model_tokenizer_llava_hf(*args, **kwargs)
+
+
+@register_model(
+    ModelType.llava_next_video_34b_instruct,
+    'huangjintao/LLaVA-NeXT-Video-34B-hf',
+    LoRATM.llama,
+    TemplateType.llava_next_video_yi,
+    support_flash_attn=True,
+    requires=['transformers>=4.42', 'av'],
+    tags=['multi-modal', 'video'],
+    hf_model_id='llava-hf/LLaVA-NeXT-Video-34B-hf')
+def get_model_tokenizer_llava_next_video_yi(*args, **kwargs):
+    model, tokenizer = get_model_tokenizer_llava_next_video(*args, **kwargs)
+    if model is not None:
+        model.config.video_token_index = 64003
+        model.config.image_token_index = 64004
+    return model, tokenizer
+
+
 @register_model(
     ModelType.llama3_llava_next_8b,
     'AI-Modelscope/llama3-llava-next-8b',

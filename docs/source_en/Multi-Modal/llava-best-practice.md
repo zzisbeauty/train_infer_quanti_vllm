@@ -1,15 +1,16 @@
 # Llava Best Practice
-The document corresponds to the following models
+The document corresponds to the following models:
 
-| model | model_type |
-|-------|------------|
-| [llava-v1.6-mistral-7b](https://modelscope.cn/models/AI-ModelScope/llava-v1.6-mistral-7b/summary) | llava1_6-mistral-7b-instruct |
-| [llava-v1.6-34b](https://www.modelscope.cn/models/AI-ModelScope/llava-v1.6-34b/summary) | llava1_6-yi-34b-instruct |
-|[llama3-llava-next-8b](https://modelscope.cn/models/AI-ModelScope/llama3-llava-next-8b/summary)|llama3-llava-next-8b|
-|[llava-next-72b](https://modelscope.cn/models/AI-ModelScope/llava-next-72b/summary)|llava-next-72b|
-|[llava-next-110b](https://modelscope.cn/models/AI-ModelScope/llava-next-110b/summary)|llava-next-110b|
+- [llava1_5-7b-instruct](https://modelscope.cn/models/huangjintao/llava-1.5-7b-hf)
+- [llava1_5-13b-instruct](https://modelscope.cn/models/huangjintao/llava-1.5-13b-hf)
+- [llava1_6-mistral-7b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-mistral-7b-hf)
+- [llava1_6-vicuna-7b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-vicuna-7b-hf)
+- [llava1_6-vicuna-13b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-vicuna-13b-hf)
+- [llava1_6-yi-34b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-34b-hf)
+- [llava-next-72b](https://modelscope.cn/models/AI-Modelscope/llava-next-72b)
+- [llava-next-110b](https://modelscope.cn/models/AI-Modelscope/llava-next-110b)
 
-The following practices take `llava-v1.6-mistral-7b` as an example. You can also switch to other models by specifying the `--model_type`.
+Here, the first 6 llava-hf models support vllm inference acceleration, you can refer to [vLLM Inference Acceleration Document](vllm-inference-acceleration.md) for specific details. The following practice takes `llava1_6-mistral-7b-instruct` as an example, and you can also switch to other models by specifying `--model_type`.
 
 
 ## Table of Contents
@@ -49,9 +50,10 @@ The image shows a close-up of a kitten with a soft, blurred background that sugg
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/animal.png
 There are four sheep in the picture.
 --------------------------------------------------
+<<< clear
 <<< What is the calculation result?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/math.png
-The calculation result is 14352 + 45304 = 145304.
+The calculation result is 1452 + 453004 = 453006.
 --------------------------------------------------
 <<< Write a poem based on the content of the picture.
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/poem.png
@@ -84,6 +86,20 @@ The boat, a symbol of solitude,
 In the vast expanse of the universe's beauty,
 A lone journey, a solitary quest,
 In the quiet of the night, it finds its rest.
+--------------------------------------------------
+<<< Perform OCR on the image.
+Input a media path or URL <<< https://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/ocr_en.png
+The text in the image is as follows:
+
+INTRODUCTION
+
+SWIFT supports training, inference, evaluation and deployment of 250+ LLMs (multimodal large models). Developers can directly apply our framework to their own research and production environments to realize the complete workflow from model training and evaluation to application. In addition, SWIFT provides a complete Adapters library to support the latest training techniques such as NLP, Vision, etc. This adapter library can be used directly in your own custom workflow without our training scripts.
+
+To facilitate use by users unfamiliar with deep learning, we provide a Grado web-ui for controlling training and inference, as well as accompanying deep learning courses and best practices for beginners.
+
+SWIFT has rich documentation for users, please check here.
+
+SWIFT is web-ui available both on Huggingface space and ModelScope studio, please feel free to try!
 """
 ```
 
@@ -201,7 +217,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 swift sft \
     --sft_type full \
 ```
 
-[Custom datasets](../LLM/Customization.md#-Recommended-Command-line-arguments)  support json, jsonl formats. Here is an example of a custom dataset:
+[Custom datasets](../LLM/Customization.md#-Recommended-Command-line-arguments) support json, jsonl formats. Here is an example of a custom dataset:
 
 (Only single-turn dialogue is supported. Each turn of dialogue must contain one image. Local paths or URLs can be passed in.)
 

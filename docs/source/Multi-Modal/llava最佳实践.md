@@ -1,16 +1,17 @@
-
 # Llava 最佳实践
-本篇文档对应的模型
+本篇文档涉及的模型如下:
 
-| model | model_type |
-|-------|------------|
-| [llava-v1.6-mistral-7b](https://modelscope.cn/models/AI-ModelScope/llava-v1.6-mistral-7b/summary) | llava1_6-mistral-7b-instruct |
-| [llava-v1.6-34b](https://www.modelscope.cn/models/AI-ModelScope/llava-v1.6-34b/summary) | llava1_6-yi-34b-instruct |
-|[llama3-llava-next-8b](https://modelscope.cn/models/AI-ModelScope/llama3-llava-next-8b/summary)|llama3-llava-next-8b|
-|[llava-next-72b](https://modelscope.cn/models/AI-ModelScope/llava-next-72b/summary)|llava-next-72b|
-|[llava-next-110b](https://modelscope.cn/models/AI-ModelScope/llava-next-110b/summary)|llava-next-110b|
+- [llava1_5-7b-instruct](https://modelscope.cn/models/huangjintao/llava-1.5-7b-hf)
+- [llava1_5-13b-instruct](https://modelscope.cn/models/huangjintao/llava-1.5-13b-hf)
+- [llava1_6-mistral-7b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-mistral-7b-hf)
+- [llava1_6-vicuna-7b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-vicuna-7b-hf)
+- [llava1_6-vicuna-13b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-vicuna-13b-hf)
+- [llava1_6-yi-34b-instruct](https://modelscope.cn/models/huangjintao/llava-v1.6-34b-hf)
+- [llava-next-72b](https://modelscope.cn/models/AI-Modelscope/llava-next-72b)
+- [llava-next-110b](https://modelscope.cn/models/AI-Modelscope/llava-next-110b)
 
-以下实践以`llava-v1.6-mistral-7b`为例，你也可以通过指定`--model_type`切换为其他模型
+
+其中, 前6个llava-hf模型支持vllm推理加速, 具体可以参考[vLLM推理加速文档](vLLM推理加速文档.md). 以下实践以`llava1_6-mistral-7b-instruct`为例，你也可以通过指定`--model_type`切换为其他模型.
 
 ## 目录
 - [环境准备](#环境准备)
@@ -54,9 +55,10 @@ The image shows a close-up of a kitten with a soft, blurred background that sugg
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/animal.png
 There are four sheep in the picture.
 --------------------------------------------------
+<<< clear
 <<< What is the calculation result?
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/math.png
-The calculation result is 14352 + 45304 = 145304.
+The calculation result is 1452 + 453004 = 453006.
 --------------------------------------------------
 <<< Write a poem based on the content of the picture.
 Input a media path or URL <<< http://modelscope-open.oss-cn-hangzhou.aliyuncs.com/images/poem.png
@@ -228,7 +230,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 swift sft \
 
 [自定义数据集](../LLM/自定义与拓展.md#-推荐命令行参数的形式)支持json, jsonl样式, 以下是自定义数据集的例子:
 
-(只支持单轮对话, 每轮对话必须包含一张图片, 支持传入本地路径或URL)
+(每轮对话须包含一张图片或不含图片, 支持传入本地路径或URL)
 
 ```jsonl
 {"query": "55555", "response": "66666", "images": ["image_path"]}
@@ -249,6 +251,7 @@ CUDA_VISIBLE_DEVICES=0 swift infer \
 **merge-lora**并推理:
 ```shell
 model_type="llava1_6-mistral-7b-instruct"
+
 CUDA_VISIBLE_DEVICES=0 swift export \
     --ckpt_dir "output/${model_type}/vx-xxx/checkpoint-xxx" \
     --merge_lora true

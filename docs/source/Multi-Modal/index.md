@@ -2,6 +2,8 @@
 
 ### 📚教程
 1. [MLLM部署文档](MLLM部署文档.md)
+2. [vLLM推理加速文档](vLLM推理加速文档.md)
+
 
 ### ⭐️最佳实践系列
 
@@ -14,7 +16,7 @@
 
 
 一轮对话只能包含一张图片（可能可以不含图片）:
-1. [Llava最佳实践](llava最佳实践.md)
+1. [Llava最佳实践](llava最佳实践.md), [LLava Video最佳实践](llava-video最佳实践.md)
 2. [Yi-VL最佳实践.md](yi-vl最佳实践.md)
 3. [mPLUG-Owl2最佳实践](mplug-owl2最佳实践.md)
 4. [florence最佳实践](florence最佳实践.md)

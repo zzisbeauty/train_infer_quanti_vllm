@@ -1,12 +1,11 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
-import datetime as dt
 import inspect
 import math
 import os
 import platform
 import sys
 from dataclasses import dataclass, field
-from typing import Any, List, Literal, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import json
 import numpy as np
@@ -27,6 +26,7 @@ from swift.utils import (add_version_to_work_dir, get_dist_setting, get_logger, 
 from .client_utils import get_model_list_client
 from .dataset import (DATASET_MAPPING, _dataset_name_exists, get_dataset, parse_dataset_name,
                       register_dataset_info_file, sample_dataset)
+from .media import MediaTag
 from .model import (MODEL_MAPPING, dtype_mapping, get_additional_saved_files, get_default_lora_target_modules,
                     get_default_template_type)
 from .template import TEMPLATE_MAPPING
@@ -55,6 +55,12 @@ class ArgumentsBase:
                 res.append(cls._check_path(k, v, check_exist_path_set))
             value = res
         return value
+
+    @staticmethod
+    def _is_multimodal(model_type: str) -> bool:
+        model_info = MODEL_MAPPING[model_type]
+        tags = model_info.get('tags') or []
+        return 'multi-modal' in tags
 
     def handle_path(self: Union['SftArguments', 'InferArguments']) -> None:
         check_exist_path = ['ckpt_dir', 'resume_from_checkpoint', 'custom_register_path']
@@ -572,8 +578,10 @@ class SftArguments(ArgumentsBase):
     gradient_accumulation_steps: Optional[int] = None
     max_grad_norm: float = 0.5
     predict_with_generate: bool = False
-    lr_scheduler_type: str = 'linear'
+    lr_scheduler_type: str = 'cosine'
+    lr_scheduler_kwargs: Optional[str] = None  # json
     warmup_ratio: float = 0.05
+    warmup_steps: int = 0  # Overrides any effect of `warmup_ratio` if warmup_steps > 0
 
     eval_steps: int = 50
     save_steps: Optional[int] = None
@@ -615,7 +623,7 @@ class SftArguments(ArgumentsBase):
     acc_strategy: Literal['token', 'sentence'] = 'token'
     save_on_each_node: bool = True
     evaluation_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
-    save_strategy: Literal['steps', 'epoch', 'no'] = 'steps'
+    save_strategy: Literal['steps', 'epoch', 'no', None] = None
     save_safetensors: bool = True
     gpu_memory_fraction: Optional[float] = None
     include_num_input_tokens_seen: Optional[bool] = False
@@ -725,6 +733,12 @@ class SftArguments(ArgumentsBase):
             self.lora_use_all = True
         return target_modules
 
+    def handle_lr_scheduler_kwargs(self):
+        if self.lr_scheduler_kwargs is None:
+            self.lr_scheduler_kwargs = {}
+        elif isinstance(self.lr_scheduler_kwargs, str):
+            self.lr_scheduler_kwargs = json.loads(self.lr_scheduler_kwargs)
+
     def _prepare_modules_to_save(self, modules_to_save) -> List[str]:
         if isinstance(modules_to_save, str):
             modules_to_save = [modules_to_save]
@@ -775,6 +789,8 @@ class SftArguments(ArgumentsBase):
         self.set_model_type()
         self.check_flash_attn()
         self.handle_generation_config()
+        self.handle_lr_scheduler_kwargs()
+        self.is_multimodal = self._is_multimodal(self.model_type)
 
         self.lora_use_embedding = False
         self.lora_use_all = False
@@ -850,6 +866,8 @@ class SftArguments(ArgumentsBase):
 
         if self.save_steps is None:
             self.save_steps = self.eval_steps
+        if self.save_strategy is None:
+            self.save_strategy = self.evaluation_strategy
 
         # compatibility
         if self.quantization_bit > 0 and self.quant_method is None:
@@ -965,7 +983,9 @@ class SftArguments(ArgumentsBase):
             num_train_epochs=self.num_train_epochs,
             max_steps=self.max_steps,
             lr_scheduler_type=self.lr_scheduler_type,
+            lr_scheduler_kwargs=self.lr_scheduler_kwargs,
             warmup_ratio=self.warmup_ratio,
+            warmup_steps=self.warmup_steps,
             logging_steps=self.logging_steps,
             save_strategy=self.save_strategy,
             save_steps=self.save_steps,
@@ -1121,6 +1141,8 @@ class InferArguments(ArgumentsBase):
     vllm_enable_lora: bool = False
     vllm_max_lora_rank: int = 16
     lora_modules: List[str] = field(default_factory=list)
+    image_input_shape: Optional[str] = None
+    image_feature_size: Optional[int] = None
 
     # compatibility. (Deprecated)
     self_cognition_sample: int = 0
@@ -1157,6 +1179,7 @@ class InferArguments(ArgumentsBase):
         self.set_model_type()
         self.check_flash_attn()
         self.handle_generation_config()
+        self.is_multimodal = self._is_multimodal(self.model_type)
 
         self.torch_dtype, _, _ = self.select_dtype()
         self.prepare_template()
@@ -1201,7 +1224,7 @@ class InferArguments(ArgumentsBase):
         self.lora_request_list = None
         if self.infer_backend == 'AUTO':
             self.infer_backend = 'pt'
-            if is_vllm_available() and support_vllm:
+            if is_vllm_available() and support_vllm and not self.is_multimodal:
                 if ((self.sft_type == 'full' or self.sft_type == 'lora' and self.merge_lora)
                         and self.quantization_bit == 0):
                     self.infer_backend = 'vllm'
@@ -1226,6 +1249,8 @@ class InferArguments(ArgumentsBase):
             self.stream = False
             logger.info('Setting self.stream: False')
         self.infer_media_type = template_info.get('infer_media_type', 'none')
+        self.media_type = template_info.get('media_type', 'image')
+        self.media_key = MediaTag.media_keys.get(self.media_type, 'images')
         if self.merge_device_map is None:
             self.merge_device_map = 'cpu'
 
@@ -1298,9 +1323,6 @@ class DeployArguments(InferArguments):
 
     def __post_init__(self):
         super().__post_init__()
-        model_info = MODEL_MAPPING[self.model_type]
-        tags = model_info.get('tags') or []
-        self.is_multimodal = 'multi-modal' in tags
 
 
 @dataclass

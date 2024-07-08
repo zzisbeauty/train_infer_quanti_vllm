@@ -441,19 +441,26 @@ def is_quant_model(model_type: Optional[str] = None, model=None) -> bool:
     return False
 
 
-def find_all_linears(model: Module, quantization_bit: int, model_type: str) -> List[str]:
+def find_all_linears(model: Module, quantization_bit: int, model_type: str, quant_method: str) -> List[str]:
     """ref: https://github.com/artidoro/qlora"""
     head_module_name = 'lm_head'
     if model_type in MODEL_KEYS_MAPPING:
         output = MODEL_KEYS_MAPPING[model_type].output
         idx = output.rfind('.')
         head_module_name = output[idx + 1:]
-    if quantization_bit == 4:
-        from bitsandbytes.nn import Linear4bit
-        linear_cls = [Linear4bit]
-    elif quantization_bit == 8:
-        from bitsandbytes.nn import Linear8bitLt
-        linear_cls = [Linear8bitLt]
+    if quant_method == 'bnb':
+        if quantization_bit == 4:
+            from bitsandbytes.nn import Linear4bit
+            linear_cls = [Linear4bit]
+        elif quantization_bit == 8:
+            from bitsandbytes.nn import Linear8bitLt
+            linear_cls = [Linear8bitLt]
+    elif quant_method == 'hqq':
+        from hqq.core.quantize import HQQLinear
+        linear_cls = [HQQLinear]
+    elif quant_method == 'eetq':
+        from eetq import EetqLinear
+        linear_cls = [EetqLinear]
     else:
         linear_cls = [Linear]
     if 'int4' in model_type or 'int8' in model_type:
@@ -556,14 +563,14 @@ def _prepare_inputs(model: PreTrainedModel,
                     **kwargs) -> Tuple[Dict[str, Any], Dict[str, Any], int]:
     if stop_words is None:
         stop_words = []
-    if images is None:
-        images = []
 
     example = {
         'query': query,
         'history': history,
         'system': system,
-        'images': images,  # for vl. str.
+        'images': images or [],  # for vl. str.
+        'audios': kwargs.pop('audios', None) or [],
+        'videos': kwargs.pop('videos', None) or [],
         'tools': kwargs.pop('tools', None),
         'objects': kwargs.pop('objects', None),
     }
@@ -815,18 +822,22 @@ Messages = List[Dict[str, str]]
 
 def history_to_messages(history: Optional[History],
                         query: Optional[str] = None,
-                        system: Optional[str] = None) -> Messages:
+                        system: Optional[str] = None,
+                        roles: Optional[List[List[str]]] = None) -> Messages:
     if history is None:
         history = []
     messages = []
+    if not roles:
+        roles = [['user', 'assistant']] * (len(history) + 1)
+    assert len(roles) == len(history) + 1
     if system is not None:
         messages.append({'role': 'system', 'content': system})
-    for h in history:
+    for role, h in zip(roles, history):
         assert isinstance(h, (list, tuple))
-        messages.append({'role': 'user', 'content': h[0]})
-        messages.append({'role': 'assistant', 'content': h[1]})
+        messages.append({'role': role[0], 'content': h[0]})
+        messages.append({'role': role[1], 'content': h[1]})
     if query is not None:
-        messages.append({'role': 'user', 'content': query})
+        messages.append({'role': roles[-1][0], 'content': query})
     return messages
 
 
