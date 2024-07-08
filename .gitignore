@@ -133,7 +133,10 @@ output/
 
 # ast template
 ast_index_file.py
-
+.dev_scripts
+.vscode
+__pycache__
+.idea
 
 
 *.jsonl
